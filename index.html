@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>SPP — Project Management v2</title>
+<title>SPP — Project Management</title>
 <!-- SheetJS for Excel read/write in Bulk import. Loaded async; if offline the bulk import will show a fallback message. -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- Phase 8v-1: MSAL.js for Microsoft 365 sign-in. Loaded from Microsoft's CDN. If unavailable (offline / blocked / running outside production hosting) the app falls back to demo mode with the hardcoded ME. -->
@@ -682,7 +682,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showInitialScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07a · m365-signin</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07b · hard-auth</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -702,10 +702,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="om" id="om-wrap" onclick="toggleOnlyMe()">
       <div class="ckb" id="om-cb"></div>
       <span class="oml">Only me</span>
-    </div>
-    <div title="Prototype only: switch the active user to test what non-admins see. In production, identity comes from your Office 365 sign-in." style="display:flex;align-items:center;gap:6px;font-size:11px;color:#888;background:#f5f5f3;border:1px solid #e8e8e4;border-radius:6px;padding:4px 8px;">
-      <span>View as:</span>
-      <select id="view-as-select" onchange="switchUser(this.value)" style="border:none;background:transparent;font-size:11px;color:#444;font-family:inherit;outline:none;cursor:pointer;padding:0;"></select>
     </div>
     <button class="btn btn-primary" onclick="alert('Opens a guided new project form.')">+ New project</button>
   </div>
@@ -1314,16 +1310,27 @@ async function _initAuth(){
   const overlay=document.getElementById('signin-overlay');
   const status=document.getElementById('signin-status');
   const errBox=document.getElementById('signin-error');
-  const demoNote=document.getElementById('signin-demo-note');
-  /* If MSAL library didn't load (offline / CDN blocked / running in JSDOM
-     for tests), fall back to demo mode with the hardcoded ME. */
+  const btn=document.getElementById('signin-btn');
+  /* Test-only escape: tests set spp.testMode=true in localStorage to bypass
+     the auth gate when MSAL isn't loaded in JSDOM. In real browsers this
+     flag is never set, so the gate is hard. */
+  let testMode=false;
+  try{testMode=localStorage.getItem('spp.testMode')==='true';}catch(e){}
   if(typeof msal==='undefined'){
-    try{console.warn('[Phase 8v-1] MSAL not available — running in demo mode (auth disabled)');}catch(e){}
-    if(demoNote)demoNote.style.display='block';
-    if(status)status.textContent='Click "Sign in with Microsoft" to continue in demo mode.';
-    /* Re-purpose the sign-in button for demo mode: clicking it just dismisses. */
-    const btn=document.getElementById('signin-btn');
-    if(btn)btn.onclick=function(){if(overlay)overlay.style.display='none';};
+    if(testMode){
+      /* JSDOM test path — dismiss overlay, app runs with hardcoded ME. */
+      if(overlay)overlay.style.display='none';
+      return;
+    }
+    /* Production: MSAL library failed to load. Hard error — no bypass. */
+    try{console.error('[Phase 8v-1] MSAL library failed to load — auth gate engaged');}catch(e){}
+    if(errBox){
+      errBox.innerHTML='Microsoft sign-in library failed to load.<br>Check your internet connection and refresh the page (Ctrl+Shift+R). If the problem persists, the Microsoft auth CDN may be blocked by your network.';
+      errBox.style.display='block';
+    }
+    if(status)status.style.display='none';
+    /* Hide the sign-in button since clicking it can't do anything. */
+    if(btn)btn.style.display='none';
     return;
   }
   try{
@@ -3473,7 +3480,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07a · m365-signin'
+      build:'2026-05-07b · hard-auth'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -3638,7 +3645,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07a · m365-signin';
+const BACKUP_BUILD='2026-05-07b · hard-auth';
 function exportBackup(){
   const payload={
     _meta:{
@@ -5215,7 +5222,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07a · m365-signin','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07b · hard-auth','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
