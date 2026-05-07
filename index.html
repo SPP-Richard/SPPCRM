@@ -6,6 +6,8 @@
 <title>SPP — Project Management v2</title>
 <!-- SheetJS for Excel read/write in Bulk import. Loaded async; if offline the bulk import will show a fallback message. -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Phase 8v-1: MSAL.js for Microsoft 365 sign-in. Loaded from Microsoft's CDN. If unavailable (offline / blocked / running outside production hosting) the app falls back to demo mode with the hardcoded ME. -->
+<script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a18;font-size:14px;}
@@ -622,9 +624,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .mergepick-confirm .mc-actions .btn{padding:7px 14px;font-size:12px;}
 /* Build stamp — visible in sidebar so browser-cache issues are diagnosable. */
 .build-stamp{padding:4px 14px 8px;font-size:10px;color:#b7b7b2;letter-spacing:0.04em;font-family:ui-monospace,Menlo,Consolas,monospace;}
+/* Phase 8v-1: sign-in overlay shown until Microsoft auth completes. */
+.signin-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:#f7f6f2;display:flex;align-items:center;justify-content:center;z-index:200;}
+.signin-card{background:#fff;padding:36px 40px;border-radius:12px;box-shadow:0 4px 30px rgba(0,0,0,0.08);max-width:400px;text-align:center;border:1px solid #e6e6e0;}
+.signin-card h2{font-size:20px;margin-bottom:8px;color:#1a1a18;font-weight:500;}
+.signin-card .signin-sub{font-size:13px;color:#666;margin-bottom:22px;line-height:1.5;}
+.signin-btn{background:#0078d4;color:#fff;border:none;padding:10px 24px;font-size:14px;font-weight:500;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:10px;}
+.signin-btn:hover{background:#106ebe;}
+.signin-btn svg{width:18px;height:18px;}
+.signin-error{color:#a62929;font-size:12px;margin-top:14px;display:none;line-height:1.4;}
+.signin-status{font-size:11px;color:#888;margin-top:18px;}
+.signin-demo-note{font-size:11px;color:#a87000;margin-top:14px;background:#fff8e6;padding:8px 12px;border-radius:6px;border:1px solid #f0d99b;display:none;}
 </style>
 </head>
 <body>
+<!-- Phase 8v-1: sign-in overlay. Visible until MSAL auth resolves. -->
+<div class="signin-overlay" id="signin-overlay">
+  <div class="signin-card">
+    <h2>SPP Projects</h2>
+    <div class="signin-sub">Sign in with your Microsoft 365 account to continue.</div>
+    <button class="signin-btn" id="signin-btn" onclick="signIn()">
+      <svg viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg"><path fill="#f25022" d="M1 1h10v10H1z"/><path fill="#7fba00" d="M12 1h10v10H12z"/><path fill="#00a4ef" d="M1 12h10v10H1z"/><path fill="#ffb900" d="M12 12h10v10H12z"/></svg>
+      Sign in with Microsoft
+    </button>
+    <div class="signin-error" id="signin-error"></div>
+    <div class="signin-status" id="signin-status">Loading authentication…</div>
+    <div class="signin-demo-note" id="signin-demo-note">
+      MSAL not loaded — running in demo mode with the hardcoded user. Real Microsoft auth requires the app to be hosted at the registered URL with internet access.
+    </div>
+  </div>
+</div>
 <div class="app">
 
 <!-- SIDEBAR -->
@@ -653,7 +682,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showInitialScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-06u · file-snapshots</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07a · m365-signin</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -991,6 +1020,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <input type="file" id="import-backup-file" accept="application/json,.json" style="display:none;" onchange="importBackup(event)"/>
         </div>
       </div>
+      <div style="margin-top:14px;padding:12px;border:1px solid #d3dce6;background:#f5f8fb;border-radius:8px;">
+        <div style="font-size:11px;color:#0c447c;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Microsoft 365 sign-in</div>
+        <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
+          Signed in via the Azure app registration. Sign out to switch accounts or reset auth state.
+        </div>
+        <button class="btn btn-sm" onclick="signOut()">Sign out of Microsoft</button>
+      </div>
       <div style="margin-top:14px;padding:12px;border:1px solid #e6c1c1;background:#fdf3f3;border-radius:8px;">
         <div style="font-size:11px;color:#a62929;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Danger zone</div>
         <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
@@ -1245,6 +1281,141 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 
 <script>
+/* ========================================================================
+   PHASE 8v-1 — MSAL.js Microsoft 365 sign-in
+   ========================================================================
+   Wires the prototype to the SPP Projects Azure app registration. Sign-in
+   overlay shows until auth resolves. Once signed in, ME and ME_EMAIL come
+   from the user's M365 account. If MSAL isn't loaded (offline / running
+   from local file / CDN blocked), the app falls back to demo mode with
+   the hardcoded user, which keeps existing tests and offline use working.
+   ======================================================================== */
+const MSAL_CLIENT_ID='12b1ca1f-9385-4a74-98ad-5fa81a5bced2';
+const MSAL_TENANT_ID='a043bfcb-213f-4b14-8ffa-4a8e6cf7d1c4';
+const MSAL_SCOPES=['User.Read','Mail.Read','Calendars.ReadWrite'];
+let _msalInstance=null;
+let _msalAccount=null;
+let _msalReady=false;
+function _msalConfig(){
+  /* Use the current page URL as the redirect URI. This means MSAL works
+     whether hosted at the GitHub Pages URL or anywhere else, as long as
+     the URL matches what's registered in Azure. The trailing slash matters. */
+  const pageUrl=window.location.origin+window.location.pathname;
+  return {
+    auth:{
+      clientId:MSAL_CLIENT_ID,
+      authority:'https://login.microsoftonline.com/'+MSAL_TENANT_ID,
+      redirectUri:pageUrl
+    },
+    cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}
+  };
+}
+async function _initAuth(){
+  const overlay=document.getElementById('signin-overlay');
+  const status=document.getElementById('signin-status');
+  const errBox=document.getElementById('signin-error');
+  const demoNote=document.getElementById('signin-demo-note');
+  /* If MSAL library didn't load (offline / CDN blocked / running in JSDOM
+     for tests), fall back to demo mode with the hardcoded ME. */
+  if(typeof msal==='undefined'){
+    try{console.warn('[Phase 8v-1] MSAL not available — running in demo mode (auth disabled)');}catch(e){}
+    if(demoNote)demoNote.style.display='block';
+    if(status)status.textContent='Click "Sign in with Microsoft" to continue in demo mode.';
+    /* Re-purpose the sign-in button for demo mode: clicking it just dismisses. */
+    const btn=document.getElementById('signin-btn');
+    if(btn)btn.onclick=function(){if(overlay)overlay.style.display='none';};
+    return;
+  }
+  try{
+    _msalInstance=new msal.PublicClientApplication(_msalConfig());
+    if(typeof _msalInstance.initialize==='function')await _msalInstance.initialize();
+    /* Handle redirect-flow return (only fires if loginRedirect was used).
+       We use loginPopup by default so this is usually a no-op. */
+    const redirect=await _msalInstance.handleRedirectPromise();
+    if(redirect&&redirect.account){_onSignedIn(redirect.account);return;}
+    /* Check for existing signed-in session (cached from previous visit). */
+    const accounts=_msalInstance.getAllAccounts();
+    if(accounts&&accounts.length>0){_onSignedIn(accounts[0]);return;}
+    /* Not signed in — show the sign-in button (overlay is already visible). */
+    if(status)status.textContent='Ready. Click the button above to sign in.';
+    _msalReady=true;
+  }catch(e){
+    if(errBox){errBox.textContent='Auth init failed: '+(e.message||e.errorMessage||e);errBox.style.display='block';}
+    if(status)status.style.display='none';
+  }
+}
+async function signIn(){
+  const errBox=document.getElementById('signin-error');
+  if(errBox){errBox.style.display='none';errBox.textContent='';}
+  if(!_msalInstance){if(errBox){errBox.textContent='Auth not ready yet, try again in a moment.';errBox.style.display='block';}return;}
+  try{
+    const response=await _msalInstance.loginPopup({scopes:MSAL_SCOPES,prompt:'select_account'});
+    if(response&&response.account)_onSignedIn(response.account);
+  }catch(e){
+    if(errBox){errBox.textContent='Sign in failed: '+(e.message||e.errorMessage||'Unknown error');errBox.style.display='block';}
+  }
+}
+function _onSignedIn(account){
+  _msalAccount=account;
+  /* Set ME from the M365 display name. ME_EMAIL from the username (UPN). */
+  ME=account.name||account.username||'Unknown';
+  ME_EMAIL=account.username||'';
+  /* Make sure salesReps has an entry for this user — match by email
+     primarily, fall back to name. If not found, add as admin (since they
+     just successfully signed in to the SPP tenant). */
+  if(typeof salesReps!=='undefined'){
+    let r=salesReps.find(function(x){return x.email&&x.email.toLowerCase()===ME_EMAIL.toLowerCase();});
+    if(!r)r=salesReps.find(function(x){return x.name===ME;});
+    if(!r){
+      r={name:ME,email:ME_EMAIL,admin:true};
+      salesReps.push(r);
+      try{persistSalesReps();}catch(e){}
+    }
+    /* Use the canonical name from the rep entry to keep ME consistent
+       across reloads (handles M365 display name variations). */
+    ME=r.name;
+    ME_EMAIL=r.email||ME_EMAIL;
+  }
+  /* Hide the sign-in overlay. */
+  const overlay=document.getElementById('signin-overlay');
+  if(overlay)overlay.style.display='none';
+  /* Re-render anything that depends on ME. */
+  if(typeof applyAdminVisibility==='function')try{applyAdminVisibility();}catch(e){}
+  if(typeof rebuildViewAsDropdown==='function')try{rebuildViewAsDropdown();}catch(e){}
+  if(typeof filterProjects==='function'){
+    try{const inp=document.getElementById('mini-search');filterProjects(inp&&inp.value||'');}catch(e){}
+  }
+}
+async function signOut(){
+  if(!_msalInstance||!_msalAccount){alert('Not signed in.');return;}
+  if(!confirm('Sign out of Microsoft?\n\nYou will need to sign in again to use the app.'))return;
+  try{await _msalInstance.logoutPopup({account:_msalAccount});}catch(e){try{console.warn('Logout failed',e);}catch(_){}}
+  location.reload();
+}
+/* Acquire a Graph access token for the current scopes. Used by Phase 8v-2
+   (email scan) and Phase 8v-4 (calendar push). Returns null if not signed
+   in or in demo mode. */
+async function getAccessToken(scopes){
+  if(!_msalInstance||!_msalAccount)return null;
+  const requestedScopes=Array.isArray(scopes)?scopes:MSAL_SCOPES;
+  try{
+    const response=await _msalInstance.acquireTokenSilent({account:_msalAccount,scopes:requestedScopes});
+    return response.accessToken;
+  }catch(e){
+    /* Silent failure — fall back to interactive prompt. */
+    if(typeof msal!=='undefined'&&e instanceof msal.InteractionRequiredAuthError){
+      try{
+        const response=await _msalInstance.acquireTokenPopup({scopes:requestedScopes});
+        return response.accessToken;
+      }catch(e2){try{console.warn('Token acquisition failed',e2);}catch(_){}return null;}
+    }
+    try{console.warn('Token acquisition failed',e);}catch(_){}
+    return null;
+  }
+}
+/* Initialize after DOM is ready and MSAL CDN script has had a chance to load. */
+setTimeout(_initAuth,50);
+
 /* Current user. In a real deployment, ME comes from Office 365 sign-in
    and admin role comes from an Entra ID group claim. Here it's mutable
    via the View-as dropdown so you can test non-admin views. */
@@ -3302,7 +3473,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-06u · file-snapshots'
+      build:'2026-05-07a · m365-signin'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -3467,7 +3638,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-06u · file-snapshots';
+const BACKUP_BUILD='2026-05-07a · m365-signin';
 function exportBackup(){
   const payload={
     _meta:{
@@ -5044,7 +5215,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-06u · file-snapshots','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07a · m365-signin','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
