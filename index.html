@@ -683,7 +683,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07k · subject-grouping</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07l · resumable-scan</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1577,6 +1577,15 @@ function _scanSettingsReset(){
 let realScanState=null; /* {phase, emails, classified, decisions, daysBack, fetchedSoFar, fetchedPages} */
 async function runRealInboxScan(daysBack){
   if(!requireAdmin('Inbox scan'))return;
+  /* Phase 8v-2l: if a previous scan is still in review, offer resume so the
+     user doesn't lose hours of fetching by accidentally re-clicking the
+     sidebar entry or by closing/reopening the modal. */
+  if(realScanState&&realScanState.phase==='review'){
+    const remaining=(realScanState.classified||[]).filter(function(c){return !realScanState.decisions.has(c.email.id);}).length;
+    const resume=confirm('You have an in-progress inbox scan with '+remaining+' candidate'+(remaining===1?'':'s')+' still to review.\n\nClick OK to resume the existing review.\nClick Cancel to discard it and run a fresh scan.');
+    if(resume){showRealScanModal();renderRealScanReview();return;}
+    realScanState=null;
+  }
   const days=daysBack||(scanSettings&&scanSettings.firstScanDays)||365;
   realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),daysBack:days,fetchedSoFar:0,fetchedPages:0};
   showRealScanModal();
@@ -1609,7 +1618,12 @@ async function runRealInboxScan(daysBack){
   }
 }
 function showRealScanModal(){const m=document.getElementById('real-scan-modal');if(m)m.classList.add('open');}
-function hideRealScanModal(){const m=document.getElementById('real-scan-modal');if(m)m.classList.remove('open');realScanState=null;}
+/* Phase 8v-2l: do NOT wipe realScanState on close. The user often wants to
+   close the modal mid-review to verify a freshly-created project, then come
+   back to finish the rest. State persists in window scope; the next click on
+   "Initial inbox scan" will offer resume. State is only discarded if the
+   user explicitly chooses "fresh scan" or refreshes the page. */
+function hideRealScanModal(){const m=document.getElementById('real-scan-modal');if(m)m.classList.remove('open');}
 function renderRealScanProgress(){
   const body=document.getElementById('real-scan-body');
   if(!body||!realScanState)return;
@@ -4435,7 +4449,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07k · subject-grouping'
+      build:'2026-05-07l · resumable-scan'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -4600,7 +4614,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07k · subject-grouping';
+const BACKUP_BUILD='2026-05-07l · resumable-scan';
 function exportBackup(){
   const payload={
     _meta:{
@@ -6177,7 +6191,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07k · subject-grouping','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07l · resumable-scan','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
