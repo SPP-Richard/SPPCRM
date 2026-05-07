@@ -683,7 +683,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07m · graph-retry</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07n · import-defaults+bulk-skip</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1587,7 +1587,7 @@ async function runRealInboxScan(daysBack){
     realScanState=null;
   }
   const days=daysBack||(scanSettings&&scanSettings.firstScanDays)||365;
-  realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),daysBack:days,fetchedSoFar:0,fetchedPages:0};
+  realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),selectedEmailIds:new Set(),daysBack:days,fetchedSoFar:0,fetchedPages:0};
   showRealScanModal();
   renderRealScanProgress();
   try{
@@ -1661,6 +1661,8 @@ function renderRealScanProgress(){
 function renderRealScanReview(){
   const body=document.getElementById('real-scan-body');
   if(!body||!realScanState)return;
+  /* Phase 8v-2n: backwards-compat — older states may not have selectedEmailIds. */
+  if(!realScanState.selectedEmailIds)realScanState.selectedEmailIds=new Set();
   const c=realScanState.classified;
   function notDecided(item){return !realScanState.decisions.has(item.email.id);}
   const autoKnown=c.filter(function(x){return (x.decision==='auto-explicit'||x.decision==='auto-thread'||x.decision==='auto-ref'||x.decision==='auto-name'||x.decision==='auto-contact')&&x.projectId&&notDecided(x);});
@@ -1668,24 +1670,42 @@ function renderRealScanReview(){
   const reviewLink=c.filter(function(x){return (x.decision==='review-ambiguous'||x.decision==='review-contact-multi')&&notDecided(x);});
   const reviewNew=c.filter(function(x){return (x.decision==='review-new-overlap'||x.decision==='review-new-keyword')&&notDecided(x);});
   const ignored=c.filter(function(x){return x.decision==='ignore';});
+  /* Phase 8v-2n: emails skipped because they're already linked to a project. */
+  const alreadyLinked=c.filter(function(x){return x.decision==='already-imported';});
   const decidedCount=realScanState.decisions.size;
   const totalCount=c.length;
+  const selectedCount=realScanState.selectedEmailIds.size;
   const capWarning=realScanState.capHit
     ?'<div style="font-size:12px;color:#a62929;margin-bottom:14px;padding:10px 12px;background:#fdf3f3;border:1px solid #e6c1c1;border-radius:6px;">'
       +'<strong>Scan was capped at '+totalCount+' emails ('+(realScanState.capPages||500)+' pages of '+(realScanState.daysBack||365)+' days).</strong> '
       +'Some older emails were not fetched. To scan more, narrow the date range in Inbox scan settings, or contact the developer to raise the page cap.'
     +'</div>'
     :'';
-  const html=capWarning+
+  /* Phase 8v-2n: sticky bulk-action toolbar that surfaces when ≥1 row is ticked. */
+  const bulkToolbar=selectedCount
+    ?'<div style="position:sticky;top:0;z-index:5;background:#0c447c;color:#fff;padding:10px 14px;border-radius:6px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
+      +'<div style="font-size:13px;font-weight:500;">'+selectedCount+' email'+(selectedCount===1?'':'s')+' selected</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+        +'<button class="btn btn-sm" onclick="_realScanBulkSkip()" style="background:#fff;color:#a62929;border:0;font-weight:500;">Skip all selected</button>'
+        +'<button class="btn btn-sm" onclick="_realScanClearSelection()" style="background:rgba(255,255,255,0.15);color:#fff;border:0;">Clear selection</button>'
+      +'</div>'
+    +'</div>'
+    :'';
+  const alreadyLinkedNote=alreadyLinked.length
+    ?' · <strong>'+alreadyLinked.length+'</strong> already linked from a previous session (skipped from review).'
+    :'';
+  const html=capWarning+bulkToolbar+
     '<div style="font-size:12px;color:#555;margin-bottom:14px;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
-      +'<strong>'+decidedCount+'</strong> of <strong>'+totalCount+'</strong> emails processed. '
-      +'Conversation threads auto-follow when you process one email — replies and forwards get linked together.'
+      +'<strong>'+decidedCount+'</strong> of <strong>'+totalCount+'</strong> emails processed.'+alreadyLinkedNote+' '
+      +'Conversation threads auto-follow when you process one email — replies and forwards get linked together. Tick rows to bulk-skip.'
     +'</div>'
     +_renderRealScanBucket('Auto-import — known project',autoKnown,'auto-known','#0c447c','Confirmed link to a known project. Click Confirm to log the email there. Use "Confirm all" for batch processing.')
     +_renderRealScanBucket('Auto-import — needs project pick',autoUnknown,'auto-unknown','#a87000','Tagged with your project category but the matcher could not identify which project. Pick or create.')
     +_renderRealScanBucket('Review — link to existing',reviewLink,'review-link','#a87000','Subject or contact matches multiple projects. Pick which one.')
     +_renderRealScanBucket('Review — possibly new project',reviewNew,'review-new','#a87000','New-project enquiry candidates. Create a new project, link to existing, or skip.')
-    +'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#aaa;">Ignored: '+ignored.length+' (silently skipped — noreply, internal-only, or no signal)</div>';
+    +'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#aaa;">Ignored: '+ignored.length+' (silently skipped — noreply, internal-only, or no signal)'
+    +(alreadyLinked.length?' · Already linked: '+alreadyLinked.length+' (linked to a project in a previous scan)':'')
+    +'</div>';
   body.innerHTML=html;
 }
 function _normaliseEmailSubject(s){
@@ -1710,35 +1730,13 @@ function _renderRealScanBucket(title,items,bucketId,colour,helpText){
   if(groupableBuckets[bucketId]){
     return _renderRealScanBucketGrouped(title,items,bucketId,colour,helpText);
   }
-  const rows=items.map(function(c){
-    const e=c.email;
-    const subj=esc(e.subject||'(no subject)');
-    const from=esc(e.fromName||e.fromEmail||'?');
-    const date=fmtDate((e.receivedAt||'').substring(0,10))||'';
-    const reason=esc(c.reason);
-    const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
-    let actionsHtml='';
-    if(c.projectId){
-      actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>';
-    }else if(c.candidates&&c.candidates.length){
-      actionsHtml='<select id="real-scan-link-'+esc(e.id)+'" style="font-size:12px;padding:4px;border:1px solid #d3dce6;border-radius:4px;">'
-        +c.candidates.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('')
-        +'</select>'
-        +' <button class="btn btn-sm btn-primary" onclick="_realScanLinkSelected('+idJson+')">Link</button>';
-    }else{
-      actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
-        +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
-    }
-    return '<div style="padding:10px 12px;border:1px solid #e6e6e0;border-radius:6px;margin-bottom:6px;background:#fff;">'
-      +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
-      +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+'</div>'
-      +'<div style="font-size:11px;color:'+colour+';margin-bottom:8px;">'+reason+'</div>'
-      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button></div>'
-      +'</div>';
-  }).join('');
-  let bulkHtml='';
+  /* Phase 8v-2n: unified row renderer (same checkbox + layout as grouped buckets). */
+  const rows=items.map(_renderRealScanRow).join('');
+  /* Phase 8v-2n: select-all-in-bucket helper for the non-grouped bucket. */
+  const selectAllIdsJson=JSON.stringify(items.map(function(c){return c.email.id;})).replace(/"/g,'&quot;');
+  let bulkHtml='<button class="btn btn-sm" onclick="_realScanSelectGroup('+selectAllIdsJson+')" style="font-size:11px;">Select all '+items.length+'</button>';
   if(bucketId==='auto-known'){
-    bulkHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApplyAllAuto()">Confirm all '+items.length+'</button>';
+    bulkHtml=' <button class="btn btn-sm btn-primary" onclick="_realScanApplyAllAuto()">Confirm all '+items.length+'</button>'+bulkHtml;
   }
   return '<div style="margin-bottom:18px;">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;">'
@@ -1774,13 +1772,23 @@ function _renderRealScanBucketGrouped(title,items,bucketId,colour,helpText){
     /* Multi-item cluster — group header + bulk button + per-row buttons */
     const subj=esc((cs[0].email.subject||'(no subject)').replace(/^(re:|fw:|fwd:)\s*/gi,'').trim().substring(0,80));
     const idsJson=JSON.stringify(cs.map(function(c){return c.email.id;})).replace(/"/g,'&quot;');
+    /* Phase 8v-2n: are all rows in this cluster currently selected? */
+    const allSelected=realScanState&&realScanState.selectedEmailIds
+      ?cs.every(function(item){return realScanState.selectedEmailIds.has(item.email.id);})
+      :false;
     const groupHeader=
       '<div style="background:#fff8e6;border:1px solid #f0d99b;border-radius:6px;padding:10px 12px;margin-bottom:6px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
       +'<div style="font-size:13px;font-weight:600;color:#a87000;">'+subj+' <span style="font-weight:400;color:#888;">('+cs.length+' related emails)</span></div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
       +'<button class="btn btn-sm btn-primary" onclick="_realScanCreateNewForGroup('+idsJson+')">Create one project for all '+cs.length+'</button>'
+      +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;cursor:pointer;background:#fff;border:1px solid #f0d99b;border-radius:4px;padding:3px 8px;">'
+        +'<input type="checkbox" '+(allSelected?'checked':'')+' onclick="_realScanToggleGroup('+idsJson+',this.checked)" style="cursor:pointer;"/>'
+        +'Select all '+cs.length
+      +'</label>'
       +'</div>'
-      +'<div style="font-size:11px;color:#a87000;margin-top:4px;line-height:1.4;">These emails share the same normalised subject. Likely the same project. Click above to create one project and link them all in one go.</div>'
+      +'</div>'
+      +'<div style="font-size:11px;color:#a87000;margin-top:4px;line-height:1.4;">These emails share the same normalised subject. Likely the same project. Click above to create one project and link them all in one go, or tick "Select all" to add to bulk-skip.</div>'
       +'</div>';
     /* Indented rows for the cluster — same actions as normal rows but visually nested. */
     const innerRows=cs.map(function(c){return '<div style="margin-left:14px;border-left:2px solid #f0d99b;padding-left:10px;">'+_renderRealScanRow(c)+'</div>';}).join('');
@@ -1802,6 +1810,11 @@ function _renderRealScanRow(c){
   const date=fmtDate((e.receivedAt||'').substring(0,10))||'';
   const reason=esc(c.reason);
   const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
+  /* Phase 8v-2n: per-row checkbox for bulk-skip selection. */
+  const sel=realScanState&&realScanState.selectedEmailIds&&realScanState.selectedEmailIds.has(e.id);
+  const checkboxHtml='<input type="checkbox" '+(sel?'checked':'')+' onclick="_realScanToggleSelect('+idJson+')" style="margin-top:2px;cursor:pointer;flex-shrink:0;" title="Tick to add to bulk-skip selection"/>';
+  const rowBg=sel?'#eef4fb':'#fff';
+  const rowBorder=sel?'#0c447c':'#e6e6e0';
   let actionsHtml='';
   if(c.projectId){
     actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>';
@@ -1814,11 +1827,14 @@ function _renderRealScanRow(c){
     actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
       +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
   }
-  return '<div style="padding:10px 12px;border:1px solid #e6e6e0;border-radius:6px;margin-bottom:6px;background:#fff;">'
+  return '<div style="padding:10px 12px;border:1px solid '+rowBorder+';border-radius:6px;margin-bottom:6px;background:'+rowBg+';display:flex;gap:10px;align-items:flex-start;">'
+    +checkboxHtml
+    +'<div style="flex:1;min-width:0;">'
     +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
     +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+'</div>'
     +'<div style="font-size:11px;color:#a87000;margin-bottom:8px;">'+reason+'</div>'
     +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button></div>'
+    +'</div>'
     +'</div>';
 }
 function _realScanCreateNewForGroup(emailIds){
@@ -1834,21 +1850,33 @@ function _realScanCreateNewForGroup(emailIds){
   const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
   const year=new Date().getFullYear();
   const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
-  /* Collect unique contacts from ALL items in the group. */
+  /* Phase 8v-2n: Collect unique contacts from ALL items in the group, but:
+     - Filter out @spp.co.uk senders (Richard/Sarah/Tom/Laura — internal team).
+     - Default contact.type to '' (was 'architect') so user can assign correctly.
+     - If we have company role memory, pre-fill the type accordingly. */
   const seenContactEmails=new Set();
   const contacts=[];
   items.forEach(function(c){
     const e=c.email;
-    if(e.fromEmail&&!seenContactEmails.has(e.fromEmail.toLowerCase())){
-      seenContactEmails.add(e.fromEmail.toLowerCase());
-      contacts.push({name:e.fromName||'',email:e.fromEmail,role:'',company:_extractDomainCompany(e.fromEmail)||'',type:'architect',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
-    }
+    if(!e.fromEmail)return;
+    if(_isSppStaffEmail(e.fromEmail))return;
+    if(seenContactEmails.has(e.fromEmail.toLowerCase()))return;
+    seenContactEmails.add(e.fromEmail.toLowerCase());
+    const co=_extractDomainCompany(e.fromEmail)||'';
+    const remembered=_lookupCompanyRole(co);
+    contacts.push({name:e.fromName||'',email:e.fromEmail,role:'',company:co,type:remembered||'',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
   });
+  /* Phase 8v-2n: project header role fields stay blank unless we have
+     definite memory for the lead sender's company. We do not guess from
+     domain alone. */
+  const leadCo=_extractDomainCompany(lead.fromEmail)||'';
+  const leadRoleMemory=_lookupCompanyRole(leadCo);
   const newProject={
     id:nextId,
     ref:'SPP-'+year+'-'+String(seq).padStart(3,'0'),
     name:cleaned,addr:'',
-    architect:_extractDomainCompany(lead.fromEmail)||'',contractor:'',
+    architect:leadRoleMemory==='architect'?leadCo:'',
+    contractor:leadRoleMemory==='mc'?leadCo:'',
     stage:'spec',sppRef:'',flagged:false,
     salesRep:ME||'Unassigned',
     followUp:'',lastUpdated:today(),
@@ -1904,7 +1932,11 @@ function _addEmailToProjectFromScan(email,projectId){
   /* Dedupe — don't add an email twice if the user re-applies the same one. */
   if(p.emails.some(function(x){return x.id===email.id;}))return;
   const dateIso=(email.receivedAt||'').substring(0,10);
-  p.emails.push({id:email.id,from:email.fromName||email.fromEmail,company:'',role:'',subject:email.subject||'(no subject)',date:dateIso,points:[email.bodyPreview||'']});
+  /* Phase 8v-2n: populate company from sender domain so the Emails tab can
+     group emails by company. Role looked up from company role memory if known. */
+  const company=_extractDomainCompany(email.fromEmail)||'';
+  const role=_lookupCompanyRole(company)||'';
+  p.emails.push({id:email.id,from:email.fromName||email.fromEmail,company:company,role:role,subject:email.subject||'(no subject)',date:dateIso,points:[email.bodyPreview||'']});
   p.timeline.unshift({id:'tl-'+email.id,type:'email',date:dateIso,author:email.fromName||email.fromEmail,action:'logged email',title:email.subject||'(no subject)',sub:email.fromEmail||'',points:[email.bodyPreview||'']});
   p.lastUpdated=today();
 }
@@ -1962,17 +1994,26 @@ function _realScanCreateNew(emailId){
   const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
   const year=new Date().getFullYear();
   const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
+  /* Phase 8v-2n: blank role defaults (only filled when company role memory
+     gives us a definite hit). Filter SPP staff from contacts. */
+  const senderCo=_extractDomainCompany(e.fromEmail)||'';
+  const senderRoleMemory=_lookupCompanyRole(senderCo);
+  const isSpp=_isSppStaffEmail(e.fromEmail);
+  const initialContacts=(e.fromEmail&&!isSpp)
+    ?[{name:e.fromName||'',email:e.fromEmail,role:'',company:senderCo,type:senderRoleMemory||'',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'}]
+    :[];
   const newProject={
     id:nextId,
     ref:'SPP-'+year+'-'+String(seq).padStart(3,'0'),
     name:cleaned,addr:'',
-    architect:_extractDomainCompany(e.fromEmail)||'',contractor:'',
+    architect:senderRoleMemory==='architect'?senderCo:'',
+    contractor:senderRoleMemory==='mc'?senderCo:'',
     stage:'spec',sppRef:'',flagged:false,
     salesRep:ME||'Unassigned',
     followUp:'',lastUpdated:today(),
     expectedBuildMonth:null,expectedBuildYear:null,
     subs:[],
-    contacts:e.fromEmail?[{name:e.fromName||'',email:e.fromEmail,role:'',company:_extractDomainCompany(e.fromEmail)||'',type:'architect',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'}]:[],
+    contacts:initialContacts,
     emails:[],files:[],timeline:[],reminders:[],products:[],projectTypes:[]
   };
   projects.push(newProject);
@@ -2011,6 +2052,47 @@ function _realScanLinkPrompt(emailId){
 function _realScanSkip(emailId){
   if(!realScanState)return;
   realScanState.decisions.set(emailId,{action:'skipped'});
+  /* Phase 8v-2n: clear from selection if it was ticked. */
+  if(realScanState.selectedEmailIds)realScanState.selectedEmailIds.delete(emailId);
+  renderRealScanReview();
+}
+/* ====== Phase 8v-2n: bulk-skip selection handlers ====== */
+function _realScanToggleSelect(emailId){
+  if(!realScanState)return;
+  if(!realScanState.selectedEmailIds)realScanState.selectedEmailIds=new Set();
+  if(realScanState.selectedEmailIds.has(emailId)){realScanState.selectedEmailIds.delete(emailId);}
+  else{realScanState.selectedEmailIds.add(emailId);}
+  renderRealScanReview();
+}
+function _realScanToggleGroup(emailIds,checked){
+  if(!realScanState||!Array.isArray(emailIds))return;
+  if(!realScanState.selectedEmailIds)realScanState.selectedEmailIds=new Set();
+  emailIds.forEach(function(id){
+    if(checked)realScanState.selectedEmailIds.add(id);
+    else realScanState.selectedEmailIds.delete(id);
+  });
+  renderRealScanReview();
+}
+function _realScanSelectGroup(emailIds){
+  /* "Select all N" button — adds without toggling off. */
+  if(!realScanState||!Array.isArray(emailIds))return;
+  if(!realScanState.selectedEmailIds)realScanState.selectedEmailIds=new Set();
+  emailIds.forEach(function(id){realScanState.selectedEmailIds.add(id);});
+  renderRealScanReview();
+}
+function _realScanClearSelection(){
+  if(!realScanState||!realScanState.selectedEmailIds)return;
+  realScanState.selectedEmailIds.clear();
+  renderRealScanReview();
+}
+function _realScanBulkSkip(){
+  if(!realScanState||!realScanState.selectedEmailIds||!realScanState.selectedEmailIds.size)return;
+  const n=realScanState.selectedEmailIds.size;
+  if(!confirm('Skip '+n+' selected email'+(n===1?'':'s')+'?\n\nThey won\'t appear in the review again unless you re-run the scan and they re-classify.'))return;
+  realScanState.selectedEmailIds.forEach(function(id){
+    realScanState.decisions.set(id,{action:'bulk-skipped'});
+  });
+  realScanState.selectedEmailIds.clear();
   renderRealScanReview();
 }
 function _extractDomainCompany(emailAddr){
@@ -2022,6 +2104,67 @@ function _extractDomainCompany(emailAddr){
   if(!parts.length||!parts[0])return '';
   const word=parts[0];
   return word.charAt(0).toUpperCase()+word.slice(1);
+}
+/* Phase 8v-2n: SPP staff filter. Don't add Richard or any @spp.co.uk
+   sender to a project's contact list — they're internal team, not external
+   contacts. Currently scoped to the @spp.co.uk domain; if SPP ever takes on
+   another corporate domain this needs widening. */
+function _isSppStaffEmail(emailAddr){
+  if(!emailAddr)return false;
+  const lower=String(emailAddr).toLowerCase();
+  return lower.endsWith('@spp.co.uk');
+}
+/* Phase 8v-2n: company role memory. When a user has previously assigned
+   architect/mc/sub to contacts at a given company, we remember it on
+   companyOverrides[lower].role so the next auto-import pre-fills correctly.
+   The canonical key strips non-alphanumeric characters so "Classic Builders",
+   "classicbuilders" (extracted from a domain), and "Classic-Builders" all
+   collide on the same key. Returns null if no memory exists.
+   Looks up under the canonical key first, then the legacy plain-lowercase key
+   (so existing companyOverrides entries set by the company records screen
+   still resolve). */
+function _canonicalCompanyKey(name){
+  if(!name)return '';
+  return String(name).toLowerCase().replace(/[^a-z0-9]+/g,'').trim();
+}
+function _lookupCompanyRole(companyName){
+  if(!companyName)return null;
+  const canonical=_canonicalCompanyKey(companyName);
+  const legacy=String(companyName).toLowerCase().trim();
+  const entry=companyOverrides[canonical]||companyOverrides[legacy];
+  if(!entry)return null;
+  const r=entry.role;
+  return (r==='architect'||r==='mc'||r==='sub')?r:null;
+}
+function _rememberCompanyRole(companyName,role){
+  if(!companyName)return;
+  if(!(role==='architect'||role==='mc'||role==='sub'))return;
+  const canonical=_canonicalCompanyKey(companyName);
+  if(!canonical)return;
+  if(!companyOverrides[canonical])companyOverrides[canonical]={rep:'',btCode:'',noteEntries:[]};
+  companyOverrides[canonical].role=role;
+  /* Also write to the legacy plain-lowercase key so company-records-screen
+     lookups (which use the unnormalised key) see this. Cheap belt-and-braces. */
+  const legacy=String(companyName).toLowerCase().trim();
+  if(legacy!==canonical){
+    if(!companyOverrides[legacy])companyOverrides[legacy]={rep:'',btCode:'',noteEntries:[]};
+    companyOverrides[legacy].role=role;
+  }
+  try{persistCompanyOverrides();}catch(e){}
+}
+/* Phase 8v-2n: matcher dedupe. Returns true if this email is already
+   linked to any project (so re-running the scan doesn't re-surface emails
+   the user has already processed). */
+function _isEmailAlreadyLinked(emailId){
+  if(!emailId)return false;
+  for(let i=0;i<projects.length;i++){
+    const p=projects[i];
+    if(!Array.isArray(p.emails))continue;
+    for(let j=0;j<p.emails.length;j++){
+      if(p.emails[j].id===emailId)return true;
+    }
+  }
+  return false;
 }
 
 /* ========================================================================
@@ -2178,7 +2321,10 @@ function matchEmailsBatch(emails){
     const contacts=_findContactMatchProjects(e);if(contacts.length===1){taggedConvProject.set(e.conversationId,contacts[0]);return;}
   });
   function classifyOne(e){
-    /* Highest priority: ignore-list and internal-only override everything. */
+    /* Phase 8v-2n: top priority — if this email is already linked to any
+       project, it's been processed in a previous session. Skip from review. */
+    if(_isEmailAlreadyLinked(e.id))return {email:e,decision:'already-imported',projectId:null,reason:'already linked to a project'};
+    /* Next priority: ignore-list and internal-only override everything. */
     if(_emailMatchesIgnoreList(e))return {email:e,decision:'ignore',projectId:null,reason:'ignore-list match'};
     if(_isInternalOnly(e))return {email:e,decision:'ignore',projectId:null,reason:'internal-only chatter'};
     /* Auto: explicit category */
@@ -4498,7 +4644,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07m · graph-retry'
+      build:'2026-05-07n · import-defaults+bulk-skip'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -4663,7 +4809,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07m · graph-retry';
+const BACKUP_BUILD='2026-05-07n · import-defaults+bulk-skip';
 function exportBackup(){
   const payload={
     _meta:{
@@ -6240,7 +6386,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07m · graph-retry','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07n · import-defaults+bulk-skip','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
