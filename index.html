@@ -682,7 +682,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showInitialScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07b · hard-auth</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07c · graph-fetch</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1021,7 +1021,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
           Signed in via the Azure app registration. Sign out to switch accounts or reset auth state.
         </div>
-        <button class="btn btn-sm" onclick="signOut()">Sign out of Microsoft</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="signOut()">Sign out of Microsoft</button>
+          <button class="btn btn-sm" onclick="testInboxFetch()" title="Phase 8v-2a — proves the Microsoft Graph email integration works. Removed once the real scan UI ships in 8v-2d.">Test inbox fetch</button>
+        </div>
       </div>
       <div style="margin-top:14px;padding:12px;border:1px solid #e6c1c1;background:#fdf3f3;border-radius:8px;">
         <div style="font-size:11px;color:#a62929;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Danger zone</div>
@@ -1399,6 +1402,120 @@ async function signOut(){
   try{await _msalInstance.logoutPopup({account:_msalAccount});}catch(e){try{console.warn('Logout failed',e);}catch(_){}}
   location.reload();
 }
+/* ========================================================================
+   PHASE 8v-2a — Real Microsoft Graph email fetch
+   ========================================================================
+   fetchRecentEmails(daysBack) calls /me/messages, paginates through results,
+   and returns an array of normalised email objects ready for the matching
+   pipeline (added in Phase 8v-2c). At this stage no matching is wired yet:
+   this exists so we can prove auth + Graph + scopes work end to end before
+   layering the rest of the scan on top.
+   ======================================================================== */
+async function fetchRecentEmails(daysBack,opts){
+  daysBack=daysBack||90;
+  opts=opts||{};
+  const maxPages=opts.maxPages||50; /* hard cap to prevent runaway loops */
+  const pageSize=opts.pageSize||50;
+  const onProgress=opts.onProgress||function(){};
+  const token=await getAccessToken(['Mail.Read']);
+  if(!token)throw new Error('Not signed in — cannot fetch emails. Sign in via Microsoft first.');
+  /* ISO date for the filter. Graph wants UTC. */
+  const since=new Date();since.setDate(since.getDate()-daysBack);
+  const sinceIso=since.toISOString();
+  /* /me/messages with $filter on receivedDateTime, $select on the fields we
+     need, $orderby newest first, $top for page size. */
+  const baseUrl='https://graph.microsoft.com/v1.0/me/messages'
+    +'?$filter='+encodeURIComponent('receivedDateTime ge '+sinceIso)
+    +'&$select=id,subject,from,toRecipients,ccRecipients,categories,bodyPreview,conversationId,receivedDateTime,hasAttachments,isRead'
+    +'&$orderby=receivedDateTime desc'
+    +'&$top='+pageSize;
+  let url=baseUrl;
+  let allEmails=[];
+  let page=0;
+  while(url&&page<maxPages){
+    page++;
+    onProgress({page,total:allEmails.length,phase:'fetching'});
+    let response;
+    try{
+      response=await fetch(url,{
+        headers:{
+          'Authorization':'Bearer '+token,
+          'Accept':'application/json',
+          /* ConsistencyLevel:eventual is required for $filter+$orderby together. */
+          'ConsistencyLevel':'eventual'
+        }
+      });
+    }catch(e){throw new Error('Network error calling Graph: '+(e.message||e));}
+    if(!response.ok){
+      let detail='';
+      try{const j=await response.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(e){}
+      /* 429 = throttled. Back off and retry once. */
+      if(response.status===429){
+        const retryAfter=parseInt(response.headers.get('Retry-After')||'5',10)*1000;
+        onProgress({page,total:allEmails.length,phase:'throttled',retryAfter});
+        await new Promise(r=>setTimeout(r,retryAfter));
+        page--;continue; /* retry same URL */
+      }
+      throw new Error('Graph API error '+response.status+': '+(detail||response.statusText));
+    }
+    const data=await response.json();
+    const items=data.value||[];
+    allEmails=allEmails.concat(items.map(_normaliseGraphEmail));
+    /* Follow @odata.nextLink for pagination. */
+    url=data['@odata.nextLink']||null;
+  }
+  onProgress({page,total:allEmails.length,phase:'done'});
+  return allEmails;
+}
+/* Normalise a raw Graph message into the shape the rest of the app expects.
+   Keeps from/to as simple strings, captures categories array verbatim. */
+function _normaliseGraphEmail(m){
+  const fromAddress=(m.from&&m.from.emailAddress)||{};
+  const toList=(m.toRecipients||[]).map(function(r){return (r.emailAddress&&r.emailAddress.address)||'';}).filter(Boolean);
+  const ccList=(m.ccRecipients||[]).map(function(r){return (r.emailAddress&&r.emailAddress.address)||'';}).filter(Boolean);
+  return {
+    id:m.id,
+    conversationId:m.conversationId||'',
+    subject:m.subject||'',
+    fromName:fromAddress.name||'',
+    fromEmail:(fromAddress.address||'').toLowerCase(),
+    to:toList,
+    cc:ccList,
+    categories:Array.isArray(m.categories)?m.categories.slice():[],
+    bodyPreview:m.bodyPreview||'',
+    receivedAt:m.receivedDateTime||'',
+    hasAttachments:!!m.hasAttachments,
+    isRead:!!m.isRead
+  };
+}
+/* Test button handler — exposes the Graph integration for manual UAT.
+   Prompts user, runs fetch, shows summary. Removed once Phase 8v-2d wires
+   the real Initial Scan flow. */
+async function testInboxFetch(){
+  const days=prompt('Fetch emails from last N days. Try 7 first to verify it works, then 365 for the full back-scan.','7');
+  if(!days)return;
+  const n=parseInt(days,10);
+  if(isNaN(n)||n<1||n>730){alert('Days must be between 1 and 730.');return;}
+  const btn=event&&event.target;
+  if(btn){btn.disabled=true;btn.textContent='Fetching…';}
+  try{
+    const emails=await fetchRecentEmails(n,{onProgress:function(p){
+      if(btn)btn.textContent='Fetched '+p.total+' (page '+p.page+')';
+    }});
+    /* Build summary. */
+    const sample=emails.slice(0,5).map(function(e,i){
+      return (i+1)+'. ['+(e.receivedAt||'').substring(0,10)+'] '+(e.fromName||e.fromEmail||'?')+' — '+(e.subject||'(no subject)');
+    }).join('\n');
+    const catSet=new Set();
+    emails.forEach(function(e){(e.categories||[]).forEach(function(c){catSet.add(c);});});
+    alert('Fetched '+emails.length+' email'+(emails.length===1?'':'s')+' from the last '+n+' day'+(n===1?'':'s')+'.\n\nFirst 5:\n'+(sample||'(none)')+'\n\nUnique Outlook categories seen: '+(catSet.size?Array.from(catSet).join(', '):'(none)'));
+  }catch(e){
+    alert('Fetch failed:\n\n'+(e.message||e));
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Test inbox fetch';}
+  }
+}
+
 /* Acquire a Graph access token for the current scopes. Used by Phase 8v-2
    (email scan) and Phase 8v-4 (calendar push). Returns null if not signed
    in or in demo mode. */
@@ -3480,7 +3597,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07b · hard-auth'
+      build:'2026-05-07c · graph-fetch'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -3645,7 +3762,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07b · hard-auth';
+const BACKUP_BUILD='2026-05-07c · graph-fetch';
 function exportBackup(){
   const payload={
     _meta:{
@@ -5222,7 +5339,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07b · hard-auth','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07c · graph-fetch','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
