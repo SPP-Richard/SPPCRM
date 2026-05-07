@@ -682,7 +682,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showInitialScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07c · graph-fetch</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07d · scan-settings</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1025,6 +1025,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <button class="btn btn-sm" onclick="signOut()">Sign out of Microsoft</button>
           <button class="btn btn-sm" onclick="testInboxFetch()" title="Phase 8v-2a — proves the Microsoft Graph email integration works. Removed once the real scan UI ships in 8v-2d.">Test inbox fetch</button>
         </div>
+      </div>
+      <div style="margin-top:14px;padding:12px;border:1px solid #d3dce6;background:#f5f8fb;border-radius:8px;">
+        <div style="font-size:11px;color:#0c447c;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Email scan settings</div>
+        <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:6px;">
+          Controls what the inbox scan does with your emails. Categories are the strongest signal — emails tagged with a project category in Outlook get auto-imported. Keywords help spot new project enquiries. Ignore lists keep noise out.
+        </div>
+        <div id="scan-settings-panel"></div>
       </div>
       <div style="margin-top:14px;padding:12px;border:1px solid #e6c1c1;background:#fdf3f3;border-radius:8px;">
         <div style="font-size:11px;color:#a62929;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Danger zone</div>
@@ -1403,6 +1410,137 @@ async function signOut(){
   location.reload();
 }
 /* ========================================================================
+   PHASE 8v-2b — Email scan settings
+   ========================================================================
+   User-configurable parameters for the scan: which Outlook categories
+   count as "project emails" (Tier 1 auto-import), which keywords in
+   subject lines suggest a new project, which senders/domains to silently
+   ignore. Stored in localStorage; defaults seeded from Richard's actual
+   workflow ("SPP — Project email" category, standard new-project verbs).
+   ======================================================================== */
+const SCAN_SETTINGS_KEY='spp.scanSettings';
+const DEFAULT_SCAN_SETTINGS={
+  /* Outlook categories that mean "definitely a project email". Tier 1 in
+     the matching pipeline — auto-import without review. Names are exact:
+     case-sensitive, em-dash-sensitive, etc. */
+  projectCategories:['SPP — Project email'],
+  /* Subject-line words suggesting a new project (Tier 4-5 in pipeline). */
+  newProjectKeywords:['tender','quote','RFQ','enquiry','intro','brief'],
+  /* Senders/domains to silently skip. Match logic: if email starts with
+     any pattern (e.g. "noreply@") OR domain part matches exactly (e.g.
+     "mailchimp.com"), email is ignored. */
+  ignoreSenders:['noreply@','no-reply@','donotreply@','mailer-daemon@','postmaster@'],
+  ignoreDomains:[],
+  /* Date range for the first big back-scan (in days). Subsequent scans
+     only fetch new emails since the last scan. */
+  firstScanDays:365
+};
+let scanSettings=JSON.parse(JSON.stringify(DEFAULT_SCAN_SETTINGS));
+try{
+  const raw=localStorage.getItem(SCAN_SETTINGS_KEY);
+  if(raw){
+    const saved=JSON.parse(raw);
+    if(saved&&typeof saved==='object'){
+      /* Merge saved values onto defaults so new fields added later still
+         get sensible defaults rather than undefined. */
+      scanSettings=Object.assign({},DEFAULT_SCAN_SETTINGS,saved);
+    }
+  }
+}catch(e){}
+function persistScanSettings(){
+  try{localStorage.setItem(SCAN_SETTINGS_KEY,JSON.stringify(scanSettings));}catch(e){}
+}
+/* Convenience: does this email's categories[] include any configured
+   project category? Used by the matching pipeline (Phase 8v-2c) and by
+   the test inbox fetch button to give a "would match Tier 1" preview. */
+function _emailMatchesProjectCategory(email){
+  if(!email||!Array.isArray(email.categories)||!email.categories.length)return false;
+  const configured=scanSettings.projectCategories||[];
+  return email.categories.some(function(c){return configured.indexOf(c)>=0;});
+}
+/* Convenience: should this email be silently ignored based on sender? */
+function _emailMatchesIgnoreList(email){
+  if(!email||!email.fromEmail)return false;
+  const from=email.fromEmail.toLowerCase();
+  const senderHits=(scanSettings.ignoreSenders||[]).some(function(p){
+    return from.indexOf(p.toLowerCase())===0;
+  });
+  if(senderHits)return true;
+  const at=from.indexOf('@');
+  if(at<0)return false;
+  const domain=from.substring(at+1);
+  return (scanSettings.ignoreDomains||[]).some(function(d){
+    return domain===d.toLowerCase();
+  });
+}
+/* UI: render the scan-settings panel inside the admin modal. */
+function renderScanSettingsPanel(){
+  const wrap=document.getElementById('scan-settings-panel');
+  if(!wrap)return;
+  function listEditor(label,key,sub,placeholder){
+    const items=(scanSettings[key]||[]).map(function(v,i){
+      return '<div style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #d3dce6;border-radius:4px;padding:3px 5px 3px 9px;font-size:12px;margin:0 4px 4px 0;">'
+        +'<span>'+esc(v)+'</span>'
+        +'<button onclick="_scanSettingsRemove('+JSON.stringify(key).replace(/"/g,'&quot;')+','+i+')" style="background:none;border:none;cursor:pointer;color:#888;font-size:14px;line-height:1;padding:0 2px;" title="Remove">×</button>'
+      +'</div>';
+    }).join('');
+    return '<div style="margin-top:10px;">'
+      +'<div style="font-size:12px;font-weight:500;color:#333;margin-bottom:2px;">'+esc(label)+'</div>'
+      +'<div style="font-size:11px;color:#666;margin-bottom:6px;line-height:1.4;">'+esc(sub)+'</div>'
+      +'<div style="display:flex;flex-wrap:wrap;align-items:center;">'+items+'</div>'
+      +'<div style="display:flex;gap:6px;margin-top:6px;">'
+      +'<input type="text" id="scan-add-'+key+'" placeholder="'+esc(placeholder)+'" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #d3dce6;border-radius:4px;" onkeydown="if(event.key===\'Enter\'){_scanSettingsAdd('+JSON.stringify(key).replace(/"/g,'&quot;')+');event.preventDefault();}"/>'
+      +'<button class="btn btn-sm" onclick="_scanSettingsAdd('+JSON.stringify(key).replace(/"/g,'&quot;')+')">Add</button>'
+      +'</div></div>';
+  }
+  wrap.innerHTML=
+    listEditor('Project email categories','projectCategories',
+      'Outlook categories that flag an email as definitely project-related. Auto-imported (no review). Case-sensitive — type exactly as it appears in Outlook.',
+      'e.g. SPP — Project email')
+    +listEditor('New-project keywords','newProjectKeywords',
+      'Words in the subject line that suggest a new project enquiry. Used to surface unmatched emails as new-project candidates for review.',
+      'e.g. tender')
+    +listEditor('Ignore senders (prefixes)','ignoreSenders',
+      'Sender email prefixes to silently skip. The scan matches if the sender starts with any of these.',
+      'e.g. noreply@')
+    +listEditor('Ignore domains','ignoreDomains',
+      'Sender domains to silently skip entirely. Exact match.',
+      'e.g. mailchimp.com')
+    +'<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+    +'<div style="font-size:11px;color:#666;">Settings save instantly. To reset everything to defaults, click Reset.</div>'
+    +'<button class="btn btn-sm" onclick="_scanSettingsReset()" style="color:#a62929;">Reset to defaults</button>'
+    +'</div>';
+}
+function _scanSettingsAdd(key){
+  const inp=document.getElementById('scan-add-'+key);
+  if(!inp)return;
+  const v=(inp.value||'').trim();
+  if(!v)return;
+  if(!Array.isArray(scanSettings[key]))scanSettings[key]=[];
+  /* Dedupe (case-sensitive for categories, case-insensitive for the rest). */
+  const exists=scanSettings[key].some(function(x){
+    return key==='projectCategories'?x===v:x.toLowerCase()===v.toLowerCase();
+  });
+  if(exists){inp.value='';return;}
+  scanSettings[key].push(v);
+  persistScanSettings();
+  inp.value='';
+  renderScanSettingsPanel();
+}
+function _scanSettingsRemove(key,idx){
+  if(!Array.isArray(scanSettings[key]))return;
+  scanSettings[key].splice(idx,1);
+  persistScanSettings();
+  renderScanSettingsPanel();
+}
+function _scanSettingsReset(){
+  if(!confirm('Reset all email scan settings to defaults?\n\nThis discards any categories, keywords, or ignore patterns you have added.'))return;
+  scanSettings=JSON.parse(JSON.stringify(DEFAULT_SCAN_SETTINGS));
+  persistScanSettings();
+  renderScanSettingsPanel();
+}
+
+/* ========================================================================
    PHASE 8v-2a — Real Microsoft Graph email fetch
    ========================================================================
    fetchRecentEmails(daysBack) calls /me/messages, paginates through results,
@@ -1508,7 +1646,16 @@ async function testInboxFetch(){
     }).join('\n');
     const catSet=new Set();
     emails.forEach(function(e){(e.categories||[]).forEach(function(c){catSet.add(c);});});
-    alert('Fetched '+emails.length+' email'+(emails.length===1?'':'s')+' from the last '+n+' day'+(n===1?'':'s')+'.\n\nFirst 5:\n'+(sample||'(none)')+'\n\nUnique Outlook categories seen: '+(catSet.size?Array.from(catSet).join(', '):'(none)'));
+    /* Phase 8v-2b — preview how the configured settings would classify these. */
+    const matchProjectCat=emails.filter(_emailMatchesProjectCategory).length;
+    const wouldIgnore=emails.filter(_emailMatchesIgnoreList).length;
+    const configuredCats=(scanSettings.projectCategories||[]).join(', ')||'(none configured)';
+    alert('Fetched '+emails.length+' email'+(emails.length===1?'':'s')+' from the last '+n+' day'+(n===1?'':'s')+'.\n\n'
+      +'Would Tier-1 auto-import (matching configured project categories): '+matchProjectCat+'\n'
+      +'Would silently ignore (matching ignore list): '+wouldIgnore+'\n'
+      +'Configured project categories: '+configuredCats+'\n'
+      +'Unique Outlook categories seen across the fetch: '+(catSet.size?Array.from(catSet).join(', '):'(none)')+'\n\n'
+      +'First 5:\n'+(sample||'(none)'));
   }catch(e){
     alert('Fetch failed:\n\n'+(e.message||e));
   }finally{
@@ -3597,7 +3744,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07c · graph-fetch'
+      build:'2026-05-07d · scan-settings'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -3762,7 +3909,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07c · graph-fetch';
+const BACKUP_BUILD='2026-05-07d · scan-settings';
 function exportBackup(){
   const payload={
     _meta:{
@@ -4937,7 +5084,7 @@ function generateTimelineReportXlsx(){
 /* ------------------------- END REPORTS ------------------------- */
 
 /* Admin */
-function showAdmin(){if(!requireAdmin('Manage reps'))return;renderRepList();renderDataFolderStatus();renderSnapshotList();document.getElementById('admin-modal').classList.add('open');}
+function showAdmin(){if(!requireAdmin('Manage reps'))return;renderRepList();renderDataFolderStatus();renderSnapshotList();renderScanSettingsPanel();document.getElementById('admin-modal').classList.add('open');}
 function hideAdmin(){document.getElementById('admin-modal').classList.remove('open');}
 function renderRepList(){
   document.getElementById('rep-list').innerHTML=salesReps.map((r,i)=>{
@@ -5339,7 +5486,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07c · graph-fetch','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07d · scan-settings','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
