@@ -400,6 +400,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .ca-a{background:#CECBF6;color:#3C3489;}
 .ca-m{background:#B5D4F4;color:#0C447C;}
 .ca-s{background:#9FE1CB;color:#085041;}
+.ca-u{background:#e6e6e0;color:#666;}
 /* Contact modal */
 .cm-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#444;padding:7px 10px;border-radius:7px;background:#f9f9f7;margin-top:6px;}
 .cm-row svg{color:#999;flex-shrink:0;}
@@ -683,7 +684,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07n · import-defaults+bulk-skip</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07p · contacts-visible+role-editor</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -810,6 +811,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div class="ckb" id="edit-cb"></div>
           <span>Edit details</span>
         </label>
+        <button class="btn btn-sm" id="merge-project-btn" onclick="mergeCurrentProject()" style="margin-left:8px;font-size:11px;" title="Merge this project into another (combines emails, contacts, timeline, then deletes this one)">Merge into…</button>
       </div>
       <div class="pb" id="detail-body"></div>
     </div>
@@ -1135,6 +1137,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 
+<!-- Phase 8v-2s — PROJECT SEARCH MODAL.
+     Reusable picker that shows a search input + filtered project list.
+     Two modes: 'link-email' (link a candidate email to chosen project) and
+     'merge-into' (merge a source project into the chosen target). The
+     active mode + payload lives on window._projectPickerState. -->
+<div class="modal-bg" id="projpick-modal" style="z-index:115;">
+  <div class="modal-box w400">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="projpick-title">Pick a project</div>
+        <div class="modal-sub" id="projpick-sub">Type to filter the list.</div>
+      </div>
+      <button class="xb" onclick="hideProjectPicker()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="text" class="mergepick-search" id="projpick-search" placeholder="Type to search by name or ref…" oninput="renderProjectPickerList()" autocomplete="off"/>
+      <div class="mergepick-hint" id="projpick-hint" style="margin-top:6px;font-size:11px;color:#666;">Type any part of the project name or ref. Matches highlight as you type.</div>
+      <div class="mergepick-list" id="projpick-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-sm" onclick="hideProjectPicker()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- GENERIC CONFIRM MODAL — in-app "Are you sure?" dialog. Reusable for any
      destructive action. Does NOT use native confirm() because that was
      unreliable when stacked over other modals (see Phase 7p). -->
@@ -1183,6 +1210,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <a href="#" class="cm-btn" id="cm-call-btn"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h3l2 4-2 1a8 8 0 004 4l1-2 4 2v3a1 1 0 01-1 1A12 12 0 013 4a1 1 0 011-1z"/></svg>Call</a>
         <button class="cm-btn" onclick="saveContactToOutlook()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Save to Outlook</button>
         <button class="cm-btn" onclick="findContactDetails()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/></svg>Find details</button>
+      </div>
+      <!-- Phase 8v-2t: contact type editor. Saves immediately and writes to
+           company role memory so future imports for this company pre-fill. -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
+        <div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:6px;">Role on this project</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;" id="cm-type-buttons">
+          <button class="btn btn-sm" data-type="architect" onclick="setContactType('architect')">Architect</button>
+          <button class="btn btn-sm" data-type="mc" onclick="setContactType('mc')">Main contractor</button>
+          <button class="btn btn-sm" data-type="sub" onclick="setContactType('sub')">Sub-contractor</button>
+          <button class="btn btn-sm" data-type="" onclick="setContactType('')" style="color:#888;">Unassigned</button>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+          <label style="font-size:11px;color:#555;display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
+            <input type="checkbox" id="cm-remember-role" checked style="cursor:pointer;"/>
+            Remember this role for <span id="cm-remember-co" style="font-weight:500;">this company</span> on future imports
+          </label>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:#888;line-height:1.4;" id="cm-type-help">Choose how this contact relates to the project. Architect / MC / Sub control which group they appear in on the Contacts and Emails tabs.</div>
       </div>
     </div>
     <div class="modal-foot">
@@ -1850,22 +1895,35 @@ function _realScanCreateNewForGroup(emailIds){
   const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
   const year=new Date().getFullYear();
   const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
-  /* Phase 8v-2n: Collect unique contacts from ALL items in the group, but:
-     - Filter out @spp.co.uk senders (Richard/Sarah/Tom/Laura — internal team).
-     - Default contact.type to '' (was 'architect') so user can assign correctly.
-     - If we have company role memory, pre-fill the type accordingly. */
+  /* Phase 8v-2n + 8v-2s: Collect unique contacts from ALL items in the group.
+     Filter @spp.co.uk staff (internal team), default type to '' (was hard-coded
+     'architect'), use company role memory if known. If after filtering we have
+     0 external senders (e.g. the cluster is entirely self-forwards from
+     Richard with the project category), fall back to to+cc participants so we
+     don't end up with a project that has 0 contacts. */
   const seenContactEmails=new Set();
   const contacts=[];
-  items.forEach(function(c){
-    const e=c.email;
-    if(!e.fromEmail)return;
-    if(_isSppStaffEmail(e.fromEmail))return;
-    if(seenContactEmails.has(e.fromEmail.toLowerCase()))return;
-    seenContactEmails.add(e.fromEmail.toLowerCase());
-    const co=_extractDomainCompany(e.fromEmail)||'';
+  function _addContact(emailAddr,displayName){
+    if(!emailAddr)return;
+    if(_isSppStaffEmail(emailAddr))return;
+    const lower=emailAddr.toLowerCase();
+    if(seenContactEmails.has(lower))return;
+    seenContactEmails.add(lower);
+    const co=_extractDomainCompany(emailAddr)||'';
     const remembered=_lookupCompanyRole(co);
-    contacts.push({name:e.fromName||'',email:e.fromEmail,role:'',company:co,type:remembered||'',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
-  });
+    contacts.push({name:displayName||'',email:emailAddr,role:'',company:co,type:remembered||'',init:(displayName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
+  }
+  items.forEach(function(c){_addContact(c.email.fromEmail,c.email.fromName);});
+  /* Fallback: if senders contributed 0 external contacts, mine to+cc. We
+     don't know names for to/cc participants (Graph $select didn't ask for
+     them — worth widening later), so name stays empty and the contact card
+     just shows their email until populated. */
+  if(contacts.length===0){
+    items.forEach(function(c){
+      (c.email.to||[]).forEach(function(addr){_addContact(addr,'');});
+      (c.email.cc||[]).forEach(function(addr){_addContact(addr,'');});
+    });
+  }
   /* Phase 8v-2n: project header role fields stay blank unless we have
      definite memory for the lead sender's company. We do not guess from
      domain alone. */
@@ -1994,14 +2052,30 @@ function _realScanCreateNew(emailId){
   const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
   const year=new Date().getFullYear();
   const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
-  /* Phase 8v-2n: blank role defaults (only filled when company role memory
-     gives us a definite hit). Filter SPP staff from contacts. */
+  /* Phase 8v-2n + 8v-2s: blank role defaults (only filled when company role
+     memory gives a definite hit). Filter SPP staff from contacts. If sender
+     is SPP staff (Richard self-forwarding etc), fall back to to/cc to find
+     an external party so the project doesn't end up with 0 contacts. */
   const senderCo=_extractDomainCompany(e.fromEmail)||'';
   const senderRoleMemory=_lookupCompanyRole(senderCo);
   const isSpp=_isSppStaffEmail(e.fromEmail);
-  const initialContacts=(e.fromEmail&&!isSpp)
-    ?[{name:e.fromName||'',email:e.fromEmail,role:'',company:senderCo,type:senderRoleMemory||'',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'}]
-    :[];
+  const initialContacts=[];
+  function _initContact(addr,displayName){
+    if(!addr||_isSppStaffEmail(addr))return false;
+    const co=_extractDomainCompany(addr)||'';
+    initialContacts.push({name:displayName||'',email:addr,role:'',company:co,type:_lookupCompanyRole(co)||'',init:(displayName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
+    return true;
+  }
+  if(e.fromEmail&&!isSpp){
+    _initContact(e.fromEmail,e.fromName);
+  }
+  if(initialContacts.length===0){
+    /* Sender was SPP-internal or empty — try to/cc for an external party. */
+    (e.to||[]).forEach(function(addr){_initContact(addr,'');});
+    if(initialContacts.length===0){
+      (e.cc||[]).forEach(function(addr){_initContact(addr,'');});
+    }
+  }
   const newProject={
     id:nextId,
     ref:'SPP-'+year+'-'+String(seq).padStart(3,'0'),
@@ -2035,19 +2109,158 @@ function _realScanCreateNew(emailId){
     },10);
   }
 }
+/* Phase 8v-2s: replaced the old prompt() numbered-list UX (which truncated
+   when the project list grew past a few dozen) with a searchable modal. */
 function _realScanLinkPrompt(emailId){
-  const c=_findClassified(emailId);if(!c)return;
+  if(!realScanState||!_findClassified(emailId))return;
   if(!projects.length){alert('No existing projects to link to. Click "Create new project" instead.');return;}
-  const list=projects.map(function(p,i){return (i+1)+'. '+p.name+(p.ref?' ('+p.ref+')':'');}).join('\n');
-  const choice=prompt('Link this email to which existing project?\n\n'+list+'\n\nEnter number:');
-  if(!choice)return;
-  const idx=parseInt(choice,10)-1;
-  if(idx<0||idx>=projects.length||isNaN(idx)){alert('Invalid choice.');return;}
-  const projectId=projects[idx].id;
-  _addEmailToProjectFromScan(c.email,projectId);
-  _propagateScanConversation(c.email.conversationId,projectId,emailId);
-  realScanState.decisions.set(emailId,{action:'linked',projectId:projectId});
-  persistProjects();renderRealScanReview();
+  openProjectPicker({mode:'link-email',emailId:emailId});
+}
+/* ====== Phase 8v-2s: reusable project search picker ====== */
+let _projectPickerState=null;
+function openProjectPicker(state){
+  _projectPickerState=state||null;
+  const m=document.getElementById('projpick-modal');if(!m)return;
+  const title=document.getElementById('projpick-title');
+  const sub=document.getElementById('projpick-sub');
+  if(state&&state.mode==='link-email'){
+    title.textContent='Link email to existing project';
+    sub.textContent='Type any part of the project name or ref. Click a row to link.';
+  }else if(state&&state.mode==='merge-into'){
+    const src=projects.find(function(p){return p.id===state.sourceId;});
+    title.textContent='Merge "'+(src?src.name:'project')+'" into…';
+    sub.textContent='Pick a target. All emails, contacts, timeline, files, reminders move into the target. Source project is then deleted. Cannot be undone.';
+  }
+  const inp=document.getElementById('projpick-search');
+  if(inp){inp.value='';setTimeout(function(){inp.focus();},30);}
+  renderProjectPickerList();
+  m.classList.add('open');
+}
+function hideProjectPicker(){
+  const m=document.getElementById('projpick-modal');if(m)m.classList.remove('open');
+  _projectPickerState=null;
+}
+function renderProjectPickerList(){
+  const list=document.getElementById('projpick-list');
+  if(!list)return;
+  const inp=document.getElementById('projpick-search');
+  const q=(inp&&inp.value||'').trim().toLowerCase();
+  /* Exclude the source project from a merge picker — can't merge into self. */
+  let candidates=projects.slice();
+  if(_projectPickerState&&_projectPickerState.mode==='merge-into'&&_projectPickerState.sourceId){
+    candidates=candidates.filter(function(p){return p.id!==_projectPickerState.sourceId;});
+  }
+  if(q){
+    candidates=candidates.filter(function(p){
+      const hay=((p.name||'')+' '+(p.ref||'')+' '+(p.sppRef||'')+' '+(p.architect||'')+' '+(p.contractor||'')+' '+(p.addr||'')).toLowerCase();
+      return hay.indexOf(q)>=0;
+    });
+  }
+  /* Sort matches alphabetically by name for stable scanning. */
+  candidates.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
+  if(!candidates.length){
+    list.innerHTML='<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">No projects match "'+esc(q)+'"</div>';
+    return;
+  }
+  /* Highlight the matching substring in name/ref for quick eyeballing. */
+  function hl(text){
+    if(!q||!text)return esc(text||'');
+    const t=String(text);
+    const idx=t.toLowerCase().indexOf(q);
+    if(idx<0)return esc(t);
+    return esc(t.substring(0,idx))+'<mark style="background:#fff5b1;padding:0 2px;border-radius:2px;">'+esc(t.substring(idx,idx+q.length))+'</mark>'+esc(t.substring(idx+q.length));
+  }
+  const max=200; /* hard cap so a search hitting 5000 projects doesn't explode the DOM */
+  const shown=candidates.slice(0,max);
+  list.innerHTML=shown.map(function(p){
+    const meta=[];
+    if(p.ref)meta.push(p.ref);
+    if(p.sppRef)meta.push('SPP '+p.sppRef);
+    if(p.contractor)meta.push(p.contractor);
+    else if(p.architect)meta.push(p.architect);
+    return '<div class="mergepick-row" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f1ed;" onclick="_projectPickerSelect('+p.id+')">'
+      +'<div style="font-size:13px;font-weight:500;color:#222;">'+hl(p.name)+'</div>'
+      +'<div style="font-size:11px;color:#666;">'+meta.map(hl).join(' · ')+'</div>'
+      +'</div>';
+  }).join('')+(candidates.length>max?'<div style="padding:10px;text-align:center;color:#a87000;font-size:11px;">'+(candidates.length-max)+' more matches — narrow your search.</div>':'');
+}
+function _projectPickerSelect(projectId){
+  if(!_projectPickerState)return;
+  const target=projects.find(function(p){return p.id===projectId;});
+  if(!target)return;
+  if(_projectPickerState.mode==='link-email'){
+    const emailId=_projectPickerState.emailId;
+    const c=_findClassified(emailId);
+    if(!c){hideProjectPicker();return;}
+    _addEmailToProjectFromScan(c.email,projectId);
+    _propagateScanConversation(c.email.conversationId,projectId,emailId);
+    realScanState.decisions.set(emailId,{action:'linked',projectId:projectId});
+    persistProjects();
+    hideProjectPicker();
+    renderRealScanReview();
+  }else if(_projectPickerState.mode==='merge-into'){
+    const sourceId=_projectPickerState.sourceId;
+    if(sourceId===projectId){hideProjectPicker();return;}
+    /* Confirm before destructive merge. Native confirm() so the modal stack
+       doesn't get weird; we're just blocking the merge until user agrees. */
+    const src=projects.find(function(p){return p.id===sourceId;});
+    if(!src){hideProjectPicker();return;}
+    const summary='Merge "'+src.name+'" into "'+target.name+'"?\n\n'
+      +'This will move:\n'
+      +'  · '+(src.emails||[]).length+' emails\n'
+      +'  · '+(src.contacts||[]).length+' contacts\n'
+      +'  · '+(src.timeline||[]).length+' timeline entries\n'
+      +'  · '+(src.files||[]).length+' files\n'
+      +'  · '+(src.reminders||[]).length+' reminders\n\n'
+      +'into "'+target.name+'", then delete "'+src.name+'". This cannot be undone.';
+    if(!confirm(summary)){hideProjectPicker();return;}
+    _mergeProjectInto(sourceId,projectId);
+    hideProjectPicker();
+  }
+}
+/* ====== Phase 8v-2s: project merge ====== */
+function _mergeProjectInto(sourceId,targetId){
+  const src=projects.find(function(p){return p.id===sourceId;});
+  const tgt=projects.find(function(p){return p.id===targetId;});
+  if(!src||!tgt||src===tgt)return;
+  /* Helper: append items from src array to tgt array, deduping by a key. */
+  function _mergeArr(srcArr,tgtArr,keyFn){
+    if(!Array.isArray(srcArr)||!srcArr.length)return;
+    if(!Array.isArray(tgtArr))return;
+    const seen=new Set(tgtArr.map(keyFn).filter(function(k){return k!==undefined&&k!==null;}));
+    srcArr.forEach(function(item){
+      const k=keyFn(item);
+      if(k!==undefined&&k!==null&&seen.has(k))return;
+      tgtArr.push(item);
+      if(k!==undefined&&k!==null)seen.add(k);
+    });
+  }
+  _mergeArr(src.emails,tgt.emails,function(e){return e.id;});
+  _mergeArr(src.contacts,tgt.contacts,function(c){return (c.email||'').toLowerCase();});
+  _mergeArr(src.timeline,tgt.timeline,function(t){return t.id;});
+  _mergeArr(src.files,tgt.files,function(f){return f.id||(f.name+'|'+(f.size||''));});
+  _mergeArr(src.reminders,tgt.reminders,function(r){return r.id;});
+  _mergeArr(src.subs,tgt.subs,function(s){return (s&&s.name)||s;});
+  _mergeArr(src.products,tgt.products,function(p){return p;});
+  _mergeArr(src.projectTypes,tgt.projectTypes,function(p){return p;});
+  /* Merge note: append a one-line timeline entry on the target so the
+     audit trail records what happened. */
+  if(!Array.isArray(tgt.timeline))tgt.timeline=[];
+  tgt.timeline.unshift({id:'merge-'+Date.now(),type:'note',date:today(),author:ME||'System',action:'merged project','text':'Merged "'+src.name+'" ('+(src.ref||'no ref')+') into this project. '+(src.emails||[]).length+' emails and '+(src.contacts||[]).length+' contacts brought across.'});
+  tgt.lastUpdated=today();
+  /* Remove the source project. */
+  const idx=projects.findIndex(function(p){return p.id===sourceId;});
+  if(idx>=0)projects.splice(idx,1);
+  persistProjects();
+  /* Navigate to target. */
+  try{openProject(targetId);}catch(e){try{renderProjects();}catch(_){}}
+  alert('Merged into "'+tgt.name+'". Source project removed.');
+}
+function mergeCurrentProject(){
+  /* Called from the project header. */
+  if(typeof currentProject==='undefined'||!currentProject)return;
+  if(projects.length<2){alert('You need at least 2 projects to merge.');return;}
+  openProjectPicker({mode:'merge-into',sourceId:currentProject.id});
 }
 function _realScanSkip(emailId){
   if(!realScanState)return;
@@ -3508,18 +3721,33 @@ function renderTab(){
       return `<div class="cg"><div class="cgh">${label}</div>${inner}</div>`;
     };
     const arch=p.contacts.filter(c=>c.type==='architect'),mc=p.contacts.filter(c=>c.type==='mc'),sub=p.contacts.filter(c=>c.type==='sub');
-    body.innerHTML=rg('Architect',arch,'ca-a')+rg('Main contractor',mc,'ca-m')+rg('Sub-contractors',sub,'ca-s')||'<div style="color:#aaa;font-size:13px;">No contacts recorded.</div>';
+    /* Phase 8v-2t: contacts with no type/role set yet land in Unassigned.
+       Auto-imported contacts default to blank type. Click any contact and
+       use the dropdown in the modal to assign architect / MC / sub. */
+    const unassigned=p.contacts.filter(c=>!c.type||(c.type!=='architect'&&c.type!=='mc'&&c.type!=='sub'));
+    body.innerHTML=rg('Architect',arch,'ca-a')+rg('Main contractor',mc,'ca-m')+rg('Sub-contractors',sub,'ca-s')+rg('Unassigned',unassigned,'ca-u')||'<div style="color:#aaa;font-size:13px;">No contacts recorded.</div>';
 
   } else if(currentTab==='emails'){
-    const roles=['architect','mc','sub'],rl={architect:'Architect',mc:'Main contractor',sub:'Sub-contractors'};
+    /* Phase 8v-2t: render emails even when no roles assigned — auto-imported
+       emails default to role:'' so the original architect/mc/sub-only filter
+       hid them. Now we add an Unassigned tab whenever any emails lack a role,
+       and fall back to it if no roles exist at all. */
+    if(!p.emails.length){body.innerHTML='<div style="color:#aaa;font-size:13px;">No emails logged yet.</div>';return;}
+    const roles=['architect','mc','sub'],rl={architect:'Architect',mc:'Main contractor',sub:'Sub-contractors',unassigned:'Unassigned'};
     const avail=roles.filter(r=>p.emails.some(e=>e.role===r));
-    if(!avail.length){body.innerHTML='<div style="color:#aaa;font-size:13px;">No emails logged yet.</div>';return;}
-    if(!avail.includes(currentEmailRole))currentEmailRole=avail[0];
-    const roleEmails=p.emails.filter(e=>e.role===currentEmailRole);
-    const companies=[...new Set(roleEmails.map(e=>e.company))];
-    const subtabs=avail.map(r=>`<button class="est-tab${r===currentEmailRole?' active':''}" onclick="setEmailRole('${r}')">${rl[r]}</button>`).join('');
+    const hasUnassigned=p.emails.some(e=>!e.role||(e.role!=='architect'&&e.role!=='mc'&&e.role!=='sub'));
+    const allTabs=avail.slice();
+    if(hasUnassigned)allTabs.push('unassigned');
+    if(!allTabs.includes(currentEmailRole))currentEmailRole=allTabs[0];
+    const roleEmails=currentEmailRole==='unassigned'
+      ?p.emails.filter(e=>!e.role||(e.role!=='architect'&&e.role!=='mc'&&e.role!=='sub'))
+      :p.emails.filter(e=>e.role===currentEmailRole);
+    const companies=[...new Set(roleEmails.map(e=>e.company||'(no company)'))];
+    const subtabs=allTabs.map(r=>`<button class="est-tab${r===currentEmailRole?' active':''}" onclick="setEmailRole('${r}')">${rl[r]}</button>`).join('');
     const coBlocks=companies.map(co=>{
-      const ces=roleEmails.filter(e=>e.company===co),isOpen=expanded[co]===true;
+      /* Phase 8v-2t: when company is empty we display '(no company)' but the
+         underlying email rows still have e.company='' — match accordingly. */
+      const ces=roleEmails.filter(e=>(e.company||'(no company)')===co),isOpen=expanded[co]===true;
       const url=`https://outlook.office.com/mail/search/${encodeURIComponent(p.name+' '+co)}`;
       const bd=isOpen?`<div class="eco-bd">${ces.map(e=>`<div class="ei"><div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;"><div><div style="font-size:13px;font-weight:500;">${esc(e.from)}</div><div style="font-size:12px;color:#777;">${esc(e.subject)}</div></div><div style="font-size:11px;color:#aaa;flex-shrink:0;margin-left:8px;">${esc(fmtDate(e.date)||e.date||'')}</div></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #f5f5f3;">${e.points.map(pt=>`<div style="font-size:12px;color:#666;padding:2px 0 2px 13px;position:relative;"><span style="position:absolute;left:3px;color:#ccc;">·</span>${esc(pt)}</div>`).join('')}</div></div>`).join('')}</div>`:'';
       return `<div class="eco"><div class="eco-hd"><div class="eco-expand" onclick="toggleCo(${JSON.stringify(co)})"><svg class="eco-cv${isOpen?' open':''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg><div><div class="eco-co">${esc(co)}</div><div class="eco-ct">${ces.length} email${ces.length!==1?'s':''} logged</div></div></div><a href="${esc(url)}" target="_blank" class="eco-ol" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg>Open in Outlook</a></div>${bd}</div>`;
@@ -3840,16 +4068,32 @@ function saveReminder(){
 let currentContact=null;
 const CONTACT_TYPE_CLS={architect:'ca-a',mc:'ca-m',sub:'ca-s'};
 const CONTACT_TYPE_LABEL={architect:'Architect',mc:'Main contractor',sub:'Sub-contractor'};
+/* Phase 8v-2t: a contact whose type is blank/unknown lives in the
+   "Unassigned" group on the Contacts tab. Auto-imported contacts default
+   to blank type because we can't reliably guess role from email domain. */
+const CONTACT_TYPE_UNASSIGNED='ca-u';
 function openContactModal(projectId,contactIndex){
   const p=projects.find(x=>x.id===projectId); if(!p)return;
   const c=p.contacts[contactIndex]; if(!c)return;
   currentContact={projectId,contactIndex,data:c};
   const av=document.getElementById('cm-avatar');
   av.textContent=c.init||'??';
-  av.className='ca lg '+(CONTACT_TYPE_CLS[c.type]||'');
-  document.getElementById('cm-name').textContent=c.name||'Unknown';
-  document.getElementById('cm-role').textContent=[c.role,CONTACT_TYPE_LABEL[c.type]].filter(Boolean).join(' · ')||'—';
+  av.className='ca lg '+(CONTACT_TYPE_CLS[c.type]||CONTACT_TYPE_UNASSIGNED);
+  document.getElementById('cm-name').textContent=c.name||c.email||'Unknown';
+  document.getElementById('cm-role').textContent=[c.role,CONTACT_TYPE_LABEL[c.type]||(c.type?'':'Unassigned')].filter(Boolean).join(' · ')||'—';
   document.getElementById('cm-company').textContent=c.company||'';
+  /* Phase 8v-2t: highlight the active type button and update the remember
+     label so the user knows which company the role memory will apply to. */
+  const typeButtons=document.querySelectorAll('#cm-type-buttons button');
+  typeButtons.forEach(function(btn){
+    const isActive=(btn.getAttribute('data-type')||'')===(c.type||'');
+    btn.classList.toggle('btn-primary',isActive);
+    btn.style.opacity=isActive?'1':'0.7';
+  });
+  const remCo=document.getElementById('cm-remember-co');
+  if(remCo)remCo.textContent=c.company||'this company';
+  const remCheckbox=document.getElementById('cm-remember-role');
+  if(remCheckbox)remCheckbox.disabled=!c.company;
   const emailVal=document.getElementById('cm-email-val');
   const emailRow=document.getElementById('cm-email-row');
   const emailBtn=document.getElementById('cm-email-btn');
@@ -3886,6 +4130,47 @@ function openContactModal(projectId,contactIndex){
   document.getElementById('contact-modal').classList.add('open');
 }
 function hideContactModal(){document.getElementById('contact-modal').classList.remove('open');currentContact=null;}
+/* Phase 8v-2t: assign / change a contact's type. Persists immediately and
+   optionally writes to company role memory so future imports for the same
+   sender domain pre-fill correctly. Also updates email.role on emails from
+   the same company within this project (so the Emails tab groups them). */
+function setContactType(newType){
+  if(!currentContact)return;
+  if(!(newType===''||newType==='architect'||newType==='mc'||newType==='sub'))return;
+  const p=projects.find(function(x){return x.id===currentContact.projectId;});
+  if(!p)return;
+  const c=p.contacts[currentContact.contactIndex];
+  if(!c)return;
+  const oldType=c.type||'';
+  c.type=newType;
+  /* Update the project's architect/contractor headline fields if appropriate.
+     Only write if the field is currently blank — don't overwrite a value the
+     user has already typed in. */
+  if(newType==='architect'&&c.company&&!p.architect)p.architect=c.company;
+  if(newType==='mc'&&c.company&&!p.contractor)p.contractor=c.company;
+  /* Update emails from the same company on this project so they show up in
+     the right Emails tab. We don't touch emails from OTHER companies because
+     the user may have manually assigned them. */
+  if(newType&&Array.isArray(p.emails)&&c.company){
+    p.emails.forEach(function(e){
+      if(!e.company)return;
+      if((e.company||'').toLowerCase()===(c.company||'').toLowerCase()&&!e.role){
+        e.role=newType;
+      }
+    });
+  }
+  /* Remember role for this company so future imports pre-fill. Skip if the
+     user unchecked the box, or if the contact has no company name. */
+  const remCheckbox=document.getElementById('cm-remember-role');
+  if(newType&&c.company&&remCheckbox&&remCheckbox.checked){
+    _rememberCompanyRole(c.company,newType);
+  }
+  persistProjects();
+  /* Re-render the modal to update the active button highlight + role line. */
+  openContactModal(p.id,currentContact.contactIndex);
+  /* Re-render the active tab so the contact moves into the right group. */
+  if(typeof renderTab==='function'){try{renderTab();}catch(e){}}
+}
 function saveContactToOutlook(){
   if(!currentContact)return;
   const c=currentContact.data;
@@ -4644,7 +4929,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07n · import-defaults+bulk-skip'
+      build:'2026-05-07p · contacts-visible+role-editor'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -4809,7 +5094,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07n · import-defaults+bulk-skip';
+const BACKUP_BUILD='2026-05-07p · contacts-visible+role-editor';
 function exportBackup(){
   const payload={
     _meta:{
@@ -6386,7 +6671,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07n · import-defaults+bulk-skip','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07p · contacts-visible+role-editor','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
