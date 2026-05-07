@@ -679,11 +679,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showBulkImport()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Bulk import<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ns" data-admin-header="true" style="margin-top:8px;">Admin</div>
     <div class="ni" data-admin-only="true" onclick="showAdmin()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/></svg>Manage reps<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
-    <div class="ni" data-admin-only="true" onclick="showInitialScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
+    <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07h · cross-domain-matching</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07i · scan-review-ui</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1275,6 +1275,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 
 <!-- INITIAL INBOX SCAN MODAL -->
+<!-- PHASE 8v-2d: Real inbox scan modal (replaces the mock candidate flow) -->
+<div class="modal-bg" id="real-scan-modal">
+  <div class="modal-box w920">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Inbox scan</div>
+        <div class="modal-sub">Reads your real Outlook inbox via Microsoft Graph, classifies each email, and surfaces candidates for review.</div>
+      </div>
+      <button class="xb" onclick="hideRealScanModal()">×</button>
+    </div>
+    <div class="modal-body" id="real-scan-body" style="min-height:200px;"></div>
+    <div class="modal-foot">
+      <button class="btn btn-sm" onclick="hideRealScanModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="scan-modal">
   <div class="modal-box w920">
     <div class="modal-head">
@@ -1546,6 +1563,268 @@ function _scanSettingsReset(){
   scanSettings=JSON.parse(JSON.stringify(DEFAULT_SCAN_SETTINGS));
   persistScanSettings();
   renderScanSettingsPanel();
+}
+
+/* ========================================================================
+   PHASE 8v-2d — Real inbox scan: fetch + match + review UI
+   ========================================================================
+   Orchestrates the end-to-end flow: pull emails from Graph, run them
+   through matchEmailsBatch, then surface a per-row review UI grouped by
+   bucket. The user accepts, links, creates new, or skips each candidate.
+   Conversation-thread propagation: when a user creates or links one email
+   in a thread, all other unprocessed emails in the same conversation
+   silently follow into the same project. */
+let realScanState=null; /* {phase, emails, classified, decisions, daysBack, fetchedSoFar, fetchedPages} */
+async function runRealInboxScan(daysBack){
+  if(!requireAdmin('Inbox scan'))return;
+  const days=daysBack||(scanSettings&&scanSettings.firstScanDays)||365;
+  realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),daysBack:days,fetchedSoFar:0,fetchedPages:0};
+  showRealScanModal();
+  renderRealScanProgress();
+  try{
+    const emails=await fetchRecentEmails(days,{onProgress:function(p){
+      if(!realScanState)return;
+      realScanState.fetchedSoFar=p.total;
+      realScanState.fetchedPages=p.page;
+      if(p.phase==='throttled')realScanState.throttled=true;
+      renderRealScanProgress();
+    }});
+    if(!realScanState)return; /* modal closed mid-fetch */
+    realScanState.emails=emails;
+    realScanState.phase='matching';
+    renderRealScanProgress();
+    /* Yield once so UI flushes before the synchronous matchEmailsBatch run. */
+    await new Promise(function(r){setTimeout(r,30);});
+    if(!realScanState)return;
+    realScanState.classified=matchEmailsBatch(emails);
+    realScanState.phase='review';
+    renderRealScanReview();
+  }catch(e){
+    if(!realScanState)return;
+    realScanState.phase='error';
+    realScanState.error=e.message||String(e);
+    renderRealScanProgress();
+  }
+}
+function showRealScanModal(){const m=document.getElementById('real-scan-modal');if(m)m.classList.add('open');}
+function hideRealScanModal(){const m=document.getElementById('real-scan-modal');if(m)m.classList.remove('open');realScanState=null;}
+function renderRealScanProgress(){
+  const body=document.getElementById('real-scan-body');
+  if(!body||!realScanState)return;
+  if(realScanState.phase==='fetching'){
+    body.innerHTML='<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:14px;color:#333;margin-bottom:14px;">Reading your inbox from the last '+realScanState.daysBack+' day'+(realScanState.daysBack===1?'':'s')+'...</div>'
+      +'<div style="font-size:13px;color:#0c447c;margin-bottom:6px;">Fetched '+realScanState.fetchedSoFar+' email'+(realScanState.fetchedSoFar===1?'':'s')+' so far (page '+realScanState.fetchedPages+')</div>'
+      +(realScanState.throttled?'<div style="font-size:11px;color:#a87000;margin-top:6px;">Microsoft Graph rate-limit hit — backing off automatically...</div>':'')
+      +'<div style="margin-top:24px;color:#888;font-size:11px;line-height:1.5;">Large back-scans (12 months ≈ 15,000 emails) can take several minutes. You can leave this modal open while it runs.</div>'
+      +'</div>';
+  }else if(realScanState.phase==='matching'){
+    body.innerHTML='<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:14px;color:#333;margin-bottom:8px;">Classifying '+realScanState.emails.length+' emails through the matching pipeline...</div>'
+      +'</div>';
+  }else if(realScanState.phase==='error'){
+    body.innerHTML='<div style="padding:30px 20px;color:#a62929;">'
+      +'<div style="font-size:14px;font-weight:500;margin-bottom:10px;">Scan failed</div>'
+      +'<div style="font-size:12px;line-height:1.5;">'+esc(realScanState.error)+'</div>'
+      +'<div style="font-size:11px;color:#888;margin-top:14px;">Common causes: not signed in to Microsoft (sign in via the overlay first), CDN blocked by network, expired auth token. Try closing this modal and re-running the scan.</div>'
+      +'</div>';
+  }
+}
+function renderRealScanReview(){
+  const body=document.getElementById('real-scan-body');
+  if(!body||!realScanState)return;
+  const c=realScanState.classified;
+  function notDecided(item){return !realScanState.decisions.has(item.email.id);}
+  const autoKnown=c.filter(function(x){return (x.decision==='auto-explicit'||x.decision==='auto-thread'||x.decision==='auto-ref'||x.decision==='auto-name'||x.decision==='auto-contact')&&x.projectId&&notDecided(x);});
+  const autoUnknown=c.filter(function(x){return (x.decision==='auto-explicit'||x.decision==='auto-thread')&&!x.projectId&&notDecided(x);});
+  const reviewLink=c.filter(function(x){return (x.decision==='review-ambiguous'||x.decision==='review-contact-multi')&&notDecided(x);});
+  const reviewNew=c.filter(function(x){return (x.decision==='review-new-overlap'||x.decision==='review-new-keyword')&&notDecided(x);});
+  const ignored=c.filter(function(x){return x.decision==='ignore';});
+  const decidedCount=realScanState.decisions.size;
+  const totalCount=c.length;
+  const html=
+    '<div style="font-size:12px;color:#555;margin-bottom:14px;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
+      +'<strong>'+decidedCount+'</strong> of <strong>'+totalCount+'</strong> emails processed. '
+      +'Conversation threads auto-follow when you process one email — replies and forwards get linked together.'
+    +'</div>'
+    +_renderRealScanBucket('Auto-import — known project',autoKnown,'auto-known','#0c447c','Confirmed link to a known project. Click Confirm to log the email there. Use "Confirm all" for batch processing.')
+    +_renderRealScanBucket('Auto-import — needs project pick',autoUnknown,'auto-unknown','#a87000','Tagged with your project category but the matcher could not identify which project. Pick or create.')
+    +_renderRealScanBucket('Review — link to existing',reviewLink,'review-link','#a87000','Subject or contact matches multiple projects. Pick which one.')
+    +_renderRealScanBucket('Review — possibly new project',reviewNew,'review-new','#a87000','New-project enquiry candidates. Create a new project, link to existing, or skip.')
+    +'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#aaa;">Ignored: '+ignored.length+' (silently skipped — noreply, internal-only, or no signal)</div>';
+  body.innerHTML=html;
+}
+function _renderRealScanBucket(title,items,bucketId,colour,helpText){
+  if(!items.length)return '<div style="margin-bottom:12px;font-size:12px;color:#aaa;"><strong>'+esc(title)+': 0</strong></div>';
+  const rows=items.map(function(c){
+    const e=c.email;
+    const subj=esc(e.subject||'(no subject)');
+    const from=esc(e.fromName||e.fromEmail||'?');
+    const date=fmtDate((e.receivedAt||'').substring(0,10))||'';
+    const reason=esc(c.reason);
+    const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
+    let actionsHtml='';
+    if(c.projectId){
+      actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>';
+    }else if(c.candidates&&c.candidates.length){
+      actionsHtml='<select id="real-scan-link-'+esc(e.id)+'" style="font-size:12px;padding:4px;border:1px solid #d3dce6;border-radius:4px;">'
+        +c.candidates.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('')
+        +'</select>'
+        +' <button class="btn btn-sm btn-primary" onclick="_realScanLinkSelected('+idJson+')">Link</button>';
+    }else{
+      actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
+        +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
+    }
+    return '<div style="padding:10px 12px;border:1px solid #e6e6e0;border-radius:6px;margin-bottom:6px;background:#fff;">'
+      +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
+      +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+'</div>'
+      +'<div style="font-size:11px;color:'+colour+';margin-bottom:8px;">'+reason+'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button></div>'
+      +'</div>';
+  }).join('');
+  let bulkHtml='';
+  if(bucketId==='auto-known'){
+    bulkHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApplyAllAuto()">Confirm all '+items.length+'</button>';
+  }
+  return '<div style="margin-bottom:18px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;">'
+      +'<div style="font-size:13px;font-weight:600;color:'+colour+';">'+esc(title)+' ('+items.length+')</div>'
+      +bulkHtml
+    +'</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:8px;line-height:1.4;">'+esc(helpText)+'</div>'
+    +rows
+    +'</div>';
+}
+function _findClassified(emailId){
+  if(!realScanState)return null;
+  return realScanState.classified.find(function(x){return x.email.id===emailId;});
+}
+function _addEmailToProjectFromScan(email,projectId){
+  const p=projects.find(function(x){return x.id===projectId;});
+  if(!p)return;
+  if(!Array.isArray(p.emails))p.emails=[];
+  if(!Array.isArray(p.timeline))p.timeline=[];
+  /* Dedupe — don't add an email twice if the user re-applies the same one. */
+  if(p.emails.some(function(x){return x.id===email.id;}))return;
+  const dateIso=(email.receivedAt||'').substring(0,10);
+  p.emails.push({id:email.id,from:email.fromName||email.fromEmail,company:'',role:'',subject:email.subject||'(no subject)',date:dateIso,points:[email.bodyPreview||'']});
+  p.timeline.unshift({id:'tl-'+email.id,type:'email',date:dateIso,author:email.fromName||email.fromEmail,action:'logged email',title:email.subject||'(no subject)',sub:email.fromEmail||'',points:[email.bodyPreview||'']});
+  p.lastUpdated=today();
+}
+function _propagateScanConversation(conversationId,projectId,exceptEmailId){
+  if(!conversationId||!realScanState)return 0;
+  let n=0;
+  realScanState.classified.forEach(function(c){
+    if(c.email.id===exceptEmailId)return;
+    if(c.email.conversationId!==conversationId)return;
+    if(realScanState.decisions.has(c.email.id))return;
+    _addEmailToProjectFromScan(c.email,projectId);
+    realScanState.decisions.set(c.email.id,{action:'thread-applied',projectId:projectId});
+    n++;
+  });
+  return n;
+}
+function _realScanApply(emailId){
+  const c=_findClassified(emailId);
+  if(!c||!c.projectId)return;
+  _addEmailToProjectFromScan(c.email,c.projectId);
+  _propagateScanConversation(c.email.conversationId,c.projectId,emailId);
+  realScanState.decisions.set(emailId,{action:'applied',projectId:c.projectId});
+  persistProjects();renderRealScanReview();
+}
+function _realScanApplyAllAuto(){
+  if(!realScanState)return;
+  const c=realScanState.classified;
+  c.forEach(function(x){
+    if(realScanState.decisions.has(x.email.id))return;
+    if(!x.projectId)return;
+    if(!(x.decision==='auto-explicit'||x.decision==='auto-thread'||x.decision==='auto-ref'||x.decision==='auto-name'||x.decision==='auto-contact'))return;
+    _addEmailToProjectFromScan(x.email,x.projectId);
+    realScanState.decisions.set(x.email.id,{action:'applied',projectId:x.projectId});
+  });
+  persistProjects();renderRealScanReview();
+}
+function _realScanLinkSelected(emailId){
+  const sel=document.getElementById('real-scan-link-'+emailId);
+  if(!sel)return;
+  const projectId=parseInt(sel.value,10);
+  if(!projectId)return;
+  const c=_findClassified(emailId);if(!c)return;
+  _addEmailToProjectFromScan(c.email,projectId);
+  _propagateScanConversation(c.email.conversationId,projectId,emailId);
+  realScanState.decisions.set(emailId,{action:'linked',projectId:projectId});
+  persistProjects();renderRealScanReview();
+}
+function _realScanCreateNew(emailId){
+  const c=_findClassified(emailId);if(!c)return;
+  const e=c.email;
+  let suggested=(e.subject||'New project').replace(/^(re:|fw:|fwd:)\s*/gi,'').trim().substring(0,60);
+  const name=prompt('Create a new project for this email.\n\nProject name:',suggested);
+  if(!name)return;
+  const cleaned=name.trim();if(!cleaned)return;
+  const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
+  const year=new Date().getFullYear();
+  const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
+  const newProject={
+    id:nextId,
+    ref:'SPP-'+year+'-'+String(seq).padStart(3,'0'),
+    name:cleaned,addr:'',
+    architect:_extractDomainCompany(e.fromEmail)||'',contractor:'',
+    stage:'spec',sppRef:'',flagged:false,
+    salesRep:ME||'Unassigned',
+    followUp:'',lastUpdated:today(),
+    expectedBuildMonth:null,expectedBuildYear:null,
+    subs:[],
+    contacts:e.fromEmail?[{name:e.fromName||'',email:e.fromEmail,role:'',company:_extractDomainCompany(e.fromEmail)||'',type:'architect',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'}]:[],
+    emails:[],files:[],timeline:[],reminders:[],products:[],projectTypes:[]
+  };
+  projects.push(newProject);
+  _addEmailToProjectFromScan(e,nextId);
+  const threadCount=_propagateScanConversation(e.conversationId,nextId,emailId);
+  realScanState.decisions.set(emailId,{action:'created',projectId:nextId});
+  persistProjects();renderRealScanReview();
+  if(threadCount>0){
+    /* Brief banner so the user knows the thread followed automatically. */
+    setTimeout(function(){
+      const body=document.getElementById('real-scan-body');
+      if(body){
+        const banner=document.createElement('div');
+        banner.style.cssText='position:sticky;top:0;background:#e7f4d8;color:#2e5e13;padding:8px 12px;border:1px solid #c8dfa7;border-radius:6px;font-size:12px;margin-bottom:10px;';
+        banner.textContent='Created project "'+cleaned+'" and auto-linked '+threadCount+' thread sibling'+(threadCount===1?'':'s')+'.';
+        body.insertBefore(banner,body.firstChild);
+        setTimeout(function(){if(banner.parentNode)banner.remove();},3500);
+      }
+    },10);
+  }
+}
+function _realScanLinkPrompt(emailId){
+  const c=_findClassified(emailId);if(!c)return;
+  if(!projects.length){alert('No existing projects to link to. Click "Create new project" instead.');return;}
+  const list=projects.map(function(p,i){return (i+1)+'. '+p.name+(p.ref?' ('+p.ref+')':'');}).join('\n');
+  const choice=prompt('Link this email to which existing project?\n\n'+list+'\n\nEnter number:');
+  if(!choice)return;
+  const idx=parseInt(choice,10)-1;
+  if(idx<0||idx>=projects.length||isNaN(idx)){alert('Invalid choice.');return;}
+  const projectId=projects[idx].id;
+  _addEmailToProjectFromScan(c.email,projectId);
+  _propagateScanConversation(c.email.conversationId,projectId,emailId);
+  realScanState.decisions.set(emailId,{action:'linked',projectId:projectId});
+  persistProjects();renderRealScanReview();
+}
+function _realScanSkip(emailId){
+  if(!realScanState)return;
+  realScanState.decisions.set(emailId,{action:'skipped'});
+  renderRealScanReview();
+}
+function _extractDomainCompany(emailAddr){
+  if(!emailAddr)return '';
+  const at=emailAddr.indexOf('@');
+  if(at<0)return '';
+  const domain=emailAddr.substring(at+1);
+  const parts=domain.split('.');
+  if(!parts.length||!parts[0])return '';
+  const word=parts[0];
+  return word.charAt(0).toUpperCase()+word.slice(1);
 }
 
 /* ========================================================================
@@ -3972,7 +4251,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07h · cross-domain-matching'
+      build:'2026-05-07i · scan-review-ui'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -4137,7 +4416,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07h · cross-domain-matching';
+const BACKUP_BUILD='2026-05-07i · scan-review-ui';
 function exportBackup(){
   const payload={
     _meta:{
@@ -5714,7 +5993,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07h · cross-domain-matching','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07i · scan-review-ui','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
