@@ -683,7 +683,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07i · scan-review-ui</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07k · subject-grouping</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -1591,6 +1591,8 @@ async function runRealInboxScan(daysBack){
     }});
     if(!realScanState)return; /* modal closed mid-fetch */
     realScanState.emails=emails;
+    realScanState.capHit=!!emails._capHit;
+    realScanState.capPages=emails._capPages;
     realScanState.phase='matching';
     renderRealScanProgress();
     /* Yield once so UI flushes before the synchronous matchEmailsBatch run. */
@@ -1642,7 +1644,13 @@ function renderRealScanReview(){
   const ignored=c.filter(function(x){return x.decision==='ignore';});
   const decidedCount=realScanState.decisions.size;
   const totalCount=c.length;
-  const html=
+  const capWarning=realScanState.capHit
+    ?'<div style="font-size:12px;color:#a62929;margin-bottom:14px;padding:10px 12px;background:#fdf3f3;border:1px solid #e6c1c1;border-radius:6px;">'
+      +'<strong>Scan was capped at '+totalCount+' emails ('+(realScanState.capPages||500)+' pages of '+(realScanState.daysBack||365)+' days).</strong> '
+      +'Some older emails were not fetched. To scan more, narrow the date range in Inbox scan settings, or contact the developer to raise the page cap.'
+    +'</div>'
+    :'';
+  const html=capWarning+
     '<div style="font-size:12px;color:#555;margin-bottom:14px;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
       +'<strong>'+decidedCount+'</strong> of <strong>'+totalCount+'</strong> emails processed. '
       +'Conversation threads auto-follow when you process one email — replies and forwards get linked together.'
@@ -1654,8 +1662,28 @@ function renderRealScanReview(){
     +'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#aaa;">Ignored: '+ignored.length+' (silently skipped — noreply, internal-only, or no signal)</div>';
   body.innerHTML=html;
 }
+function _normaliseEmailSubject(s){
+  if(!s)return '';
+  let n=String(s).toLowerCase().trim();
+  /* Strip "re:", "fw:", "fwd:" prefixes repeatedly. Some clients chain them
+     ("RE: FW: RE: ..."), so loop until clean. */
+  let prev=null;
+  while(prev!==n){
+    prev=n;
+    n=n.replace(/^(re|fw|fwd|re:|fw:|fwd:)[\s:]*/i,'').trim();
+  }
+  return n;
+}
 function _renderRealScanBucket(title,items,bucketId,colour,helpText){
   if(!items.length)return '<div style="margin-bottom:12px;font-size:12px;color:#aaa;"><strong>'+esc(title)+': 0</strong></div>';
+  /* Group by normalised subject for the buckets where bulk-create is useful.
+     Emails sharing a normalised subject are very likely the same project, even
+     if their conversationIds diverged (Outlook reply branches do this). The
+     user gets one "Create one project for all N" button per group. */
+  const groupableBuckets={'auto-unknown':true,'review-new':true,'review-link':true};
+  if(groupableBuckets[bucketId]){
+    return _renderRealScanBucketGrouped(title,items,bucketId,colour,helpText);
+  }
   const rows=items.map(function(c){
     const e=c.email;
     const subj=esc(e.subject||'(no subject)');
@@ -1694,6 +1722,149 @@ function _renderRealScanBucket(title,items,bucketId,colour,helpText){
     +'<div style="font-size:11px;color:#666;margin-bottom:8px;line-height:1.4;">'+esc(helpText)+'</div>'
     +rows
     +'</div>';
+}
+function _renderRealScanBucketGrouped(title,items,bucketId,colour,helpText){
+  /* Cluster items by normalised subject. Single-item clusters render as
+     normal rows; multi-item clusters get a header + "Create one project for
+     all N" bulk button + collapsed individual rows. */
+  const clusters=new Map();
+  items.forEach(function(c){
+    const key=_normaliseEmailSubject(c.email.subject||'');
+    if(!key){
+      /* Empty subject — give each its own bucket so they don't all merge. */
+      const k='__no-subj-'+c.email.id;
+      clusters.set(k,[c]);
+      return;
+    }
+    if(!clusters.has(key))clusters.set(key,[]);
+    clusters.get(key).push(c);
+  });
+  /* Sort clusters by size desc so big groups appear first. */
+  const sortedClusters=Array.from(clusters.entries()).sort(function(a,b){return b[1].length-a[1].length;});
+  const blocksHtml=sortedClusters.map(function(entry){
+    const subjKey=entry[0];
+    const cs=entry[1];
+    if(cs.length===1)return _renderRealScanRow(cs[0]);
+    /* Multi-item cluster — group header + bulk button + per-row buttons */
+    const subj=esc((cs[0].email.subject||'(no subject)').replace(/^(re:|fw:|fwd:)\s*/gi,'').trim().substring(0,80));
+    const idsJson=JSON.stringify(cs.map(function(c){return c.email.id;})).replace(/"/g,'&quot;');
+    const groupHeader=
+      '<div style="background:#fff8e6;border:1px solid #f0d99b;border-radius:6px;padding:10px 12px;margin-bottom:6px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
+      +'<div style="font-size:13px;font-weight:600;color:#a87000;">'+subj+' <span style="font-weight:400;color:#888;">('+cs.length+' related emails)</span></div>'
+      +'<button class="btn btn-sm btn-primary" onclick="_realScanCreateNewForGroup('+idsJson+')">Create one project for all '+cs.length+'</button>'
+      +'</div>'
+      +'<div style="font-size:11px;color:#a87000;margin-top:4px;line-height:1.4;">These emails share the same normalised subject. Likely the same project. Click above to create one project and link them all in one go.</div>'
+      +'</div>';
+    /* Indented rows for the cluster — same actions as normal rows but visually nested. */
+    const innerRows=cs.map(function(c){return '<div style="margin-left:14px;border-left:2px solid #f0d99b;padding-left:10px;">'+_renderRealScanRow(c)+'</div>';}).join('');
+    return groupHeader+innerRows;
+  }).join('');
+  return '<div style="margin-bottom:18px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;">'
+      +'<div style="font-size:13px;font-weight:600;color:'+colour+';">'+esc(title)+' ('+items.length+')</div>'
+    +'</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:8px;line-height:1.4;">'+esc(helpText)+' '
+    +'<strong>Tip:</strong> rows are grouped by subject — use the "Create one project for all" button per group when several emails are about the same project.</div>'
+    +blocksHtml
+    +'</div>';
+}
+function _renderRealScanRow(c){
+  const e=c.email;
+  const subj=esc(e.subject||'(no subject)');
+  const from=esc(e.fromName||e.fromEmail||'?');
+  const date=fmtDate((e.receivedAt||'').substring(0,10))||'';
+  const reason=esc(c.reason);
+  const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
+  let actionsHtml='';
+  if(c.projectId){
+    actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>';
+  }else if(c.candidates&&c.candidates.length){
+    actionsHtml='<select id="real-scan-link-'+esc(e.id)+'" style="font-size:12px;padding:4px;border:1px solid #d3dce6;border-radius:4px;">'
+      +c.candidates.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('')
+      +'</select>'
+      +' <button class="btn btn-sm btn-primary" onclick="_realScanLinkSelected('+idJson+')">Link</button>';
+  }else{
+    actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
+      +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
+  }
+  return '<div style="padding:10px 12px;border:1px solid #e6e6e0;border-radius:6px;margin-bottom:6px;background:#fff;">'
+    +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+'</div>'
+    +'<div style="font-size:11px;color:#a87000;margin-bottom:8px;">'+reason+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button></div>'
+    +'</div>';
+}
+function _realScanCreateNewForGroup(emailIds){
+  if(!realScanState||!Array.isArray(emailIds)||!emailIds.length)return;
+  const items=emailIds.map(_findClassified).filter(Boolean);
+  if(!items.length)return;
+  /* Use the first email's metadata as the "lead" for project name, contacts. */
+  const lead=items[0].email;
+  let suggested=(lead.subject||'New project').replace(/^(re:|fw:|fwd:)\s*/gi,'').trim().substring(0,80);
+  const name=prompt('Create one new project covering all '+items.length+' emails sharing this subject.\n\nProject name:',suggested);
+  if(!name)return;
+  const cleaned=name.trim();if(!cleaned)return;
+  const nextId=projects.length?Math.max.apply(null,projects.map(function(p){return p.id;}))+1:1;
+  const year=new Date().getFullYear();
+  const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
+  /* Collect unique contacts from ALL items in the group. */
+  const seenContactEmails=new Set();
+  const contacts=[];
+  items.forEach(function(c){
+    const e=c.email;
+    if(e.fromEmail&&!seenContactEmails.has(e.fromEmail.toLowerCase())){
+      seenContactEmails.add(e.fromEmail.toLowerCase());
+      contacts.push({name:e.fromName||'',email:e.fromEmail,role:'',company:_extractDomainCompany(e.fromEmail)||'',type:'architect',init:(e.fromName||'??').split(/\s+/).map(function(w){return w[0]||'';}).slice(0,2).join('').toUpperCase()||'??'});
+    }
+  });
+  const newProject={
+    id:nextId,
+    ref:'SPP-'+year+'-'+String(seq).padStart(3,'0'),
+    name:cleaned,addr:'',
+    architect:_extractDomainCompany(lead.fromEmail)||'',contractor:'',
+    stage:'spec',sppRef:'',flagged:false,
+    salesRep:ME||'Unassigned',
+    followUp:'',lastUpdated:today(),
+    expectedBuildMonth:null,expectedBuildYear:null,
+    subs:[],contacts:contacts,
+    emails:[],files:[],timeline:[],reminders:[],products:[],projectTypes:[]
+  };
+  projects.push(newProject);
+  /* Add all emails in the group to the new project, plus any additional
+     thread siblings via conversationId propagation. */
+  const seenEmailIds=new Set();
+  items.forEach(function(c){
+    if(seenEmailIds.has(c.email.id))return;
+    seenEmailIds.add(c.email.id);
+    _addEmailToProjectFromScan(c.email,nextId);
+    realScanState.decisions.set(c.email.id,{action:'created-group',projectId:nextId});
+    /* Also pull in same-conversationId siblings that aren't already in the
+       group, since those still belong to the same project. */
+    if(c.email.conversationId){
+      realScanState.classified.forEach(function(c2){
+        if(seenEmailIds.has(c2.email.id))return;
+        if(c2.email.conversationId!==c.email.conversationId)return;
+        if(realScanState.decisions.has(c2.email.id))return;
+        seenEmailIds.add(c2.email.id);
+        _addEmailToProjectFromScan(c2.email,nextId);
+        realScanState.decisions.set(c2.email.id,{action:'thread-applied',projectId:nextId});
+      });
+    }
+  });
+  persistProjects();
+  renderRealScanReview();
+  /* Confirmation banner */
+  setTimeout(function(){
+    const body=document.getElementById('real-scan-body');
+    if(body){
+      const banner=document.createElement('div');
+      banner.style.cssText='position:sticky;top:0;background:#e7f4d8;color:#2e5e13;padding:8px 12px;border:1px solid #c8dfa7;border-radius:6px;font-size:12px;margin-bottom:10px;';
+      banner.textContent='Created project "'+cleaned+'" and linked '+seenEmailIds.size+' emails (group + thread siblings).';
+      body.insertBefore(banner,body.firstChild);
+      setTimeout(function(){if(banner.parentNode)banner.remove();},4000);
+    }
+  },10);
 }
 function _findClassified(emailId){
   if(!realScanState)return null;
@@ -2034,7 +2205,11 @@ function matchEmailsBatch(emails){
 async function fetchRecentEmails(daysBack,opts){
   daysBack=daysBack||90;
   opts=opts||{};
-  const maxPages=opts.maxPages||50; /* hard cap to prevent runaway loops */
+  /* Sanity cap — high enough that a 12-month inbox of ~15k emails fits
+     comfortably (500 × 50 = 25,000), low enough to prevent infinite loops
+     if Graph ever returns the same nextLink twice. Callers can override
+     via opts.maxPages if they have a genuinely larger inbox. */
+  const maxPages=opts.maxPages||500;
   const pageSize=opts.pageSize||50;
   const onProgress=opts.onProgress||function(){};
   const token=await getAccessToken(['Mail.Read']);
@@ -2084,7 +2259,16 @@ async function fetchRecentEmails(daysBack,opts){
     /* Follow @odata.nextLink for pagination. */
     url=data['@odata.nextLink']||null;
   }
-  onProgress({page,total:allEmails.length,phase:'done'});
+  /* Detect cap-hit: we stopped because we ran out of pages, NOT because
+     Graph said there were no more. The caller should warn the user. */
+  const capHit=(page>=maxPages&&url);
+  onProgress({page,total:allEmails.length,phase:'done',capHit:capHit});
+  if(capHit){
+    /* Attach a flag onto the array — it's an array of emails plus a hidden
+       flag the caller can check. */
+    allEmails._capHit=true;
+    allEmails._capPages=maxPages;
+  }
   return allEmails;
 }
 /* Normalise a raw Graph message into the shape the rest of the app expects.
@@ -4251,7 +4435,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07i · scan-review-ui'
+      build:'2026-05-07k · subject-grouping'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -4416,7 +4600,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07i · scan-review-ui';
+const BACKUP_BUILD='2026-05-07k · subject-grouping';
 function exportBackup(){
   const payload={
     _meta:{
@@ -5993,7 +6177,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07i · scan-review-ui','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07k · subject-grouping','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
