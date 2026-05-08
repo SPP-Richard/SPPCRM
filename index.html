@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07x · calls+meetings+files+body</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07y · files-sync+meeting-fix</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -2027,8 +2027,11 @@ function _addEmailToProjectFromScan(email,projectId){
   /* Capture conversationId + outbound flag so Emails tab can cluster threads
      and show "Richard (you)" for SPP-sent replies. webLink is Graph's
      reliable per-message URL — used by the Open ↗ button. categories captured
-     so the category-PATCH path knows the existing tags to merge with. */
-  p.emails.push({id:email.id,from:email.fromName||email.fromEmail,fromEmail:email.fromEmail||'',company:company,role:role,subject:email.subject||'(no subject)',date:dateIso,conversationId:email.conversationId||'',isOutbound:senderIsSpp,webLink:email.webLink||'',categories:Array.isArray(email.categories)?email.categories.slice():[],points:[email.bodyPreview||'']});
+     so the category-PATCH path knows the existing tags to merge with.
+     Phase 8v-3c: hasAttachments propagated so the Files tab Sync button
+     can identify candidate emails. Also retains to/cc lists for the
+     expanded email view. */
+  p.emails.push({id:email.id,from:email.fromName||email.fromEmail,fromEmail:email.fromEmail||'',company:company,role:role,subject:email.subject||'(no subject)',date:dateIso,conversationId:email.conversationId||'',isOutbound:senderIsSpp,webLink:email.webLink||'',categories:Array.isArray(email.categories)?email.categories.slice():[],hasAttachments:!!email.hasAttachments,to:Array.isArray(email.to)?email.to.slice():[],cc:Array.isArray(email.cc)?email.cc.slice():[],points:[email.bodyPreview||'']});
   /* Timeline entry: one-line summary, dated by receivedDate, references the
      email by id so the renderer can deep-link to the Emails tab. */
   p.timeline.unshift({id:'tl-'+email.id,type:'email',date:dateIso,author:email.fromName||email.fromEmail,action:'sent an email',title:email.subject||'(no subject)',sub:company||'',conversationId:email.conversationId||'',isOutbound:senderIsSpp,emailId:email.id});
@@ -4337,11 +4340,12 @@ function renderTab(){
         +(showDuration?'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Duration <input type="number" id="tl-entry-duration" value="60" min="5" step="5" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;width:60px;"/> min</label>':'')
       +'</div>'
       :'';
-    /* Phase 8v-3b: separate Notes textarea for calls/meetings.
-       Header input above is the brief title; this captures the longer
-       notes/discussion content. */
+    /* Phase 8v-3b/3c: separate Notes textarea for calls/meetings, with
+       explicit "Notes" label above. Header input gets its own label too. */
+    const notesLabel=currentTlType==='meeting'?'Meeting notes':currentTlType==='call-in'||currentTlType==='call-out'?'Call notes':'Notes';
     const notesInputHtml=showNotes
-      ?'<textarea id="tl-entry-notes" rows="4" placeholder="Detailed notes from the '+(currentTlType==='meeting'?'meeting':'call')+'…" style="width:100%;margin-top:6px;font-size:12px;padding:8px;border:1px solid #d3dce6;border-radius:4px;resize:vertical;font-family:inherit;"></textarea>'
+      ?'<div style="margin-top:8px;font-size:11px;color:#666;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;">'+esc(notesLabel)+'</div>'
+        +'<textarea id="tl-entry-notes" rows="4" placeholder="What was discussed…" style="width:100%;margin-top:4px;font-size:12px;padding:8px;border:1px solid #d3dce6;border-radius:4px;resize:vertical;font-family:inherit;"></textarea>'
       :'';
     /* Phase 8v-3b: meeting attendees — checkbox list of project contacts.
        Selected contacts get added to the Graph event as attendees. */
@@ -4362,11 +4366,18 @@ function renderTab(){
         attendeesHtml='<div style="margin-top:6px;font-size:11px;color:#888;">No project contacts yet — meeting will be created with no attendees. Add contacts via the Contacts tab.</div>';
       }
     }
+    /* Phase 8v-3c: explicit header label for non-note entry types so the
+       field doesn't look like just a placeholder (Richard reported missing it). */
+    const headerLabel=currentTlType==='meeting'?'Meeting subject (required)':currentTlType==='call-in'?'Call header (who you spoke to)':currentTlType==='call-out'?'Call header (who you called)':currentTlType==='reminder'?'Reminder text':null;
+    const headerLabelHtml=headerLabel
+      ?'<div style="font-size:11px;color:#666;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'+esc(headerLabel)+'</div>'
+      :'';
     const addBar=`
       <div class="timeline-add">
         <div class="tl-avatar">RH</div>
         <div class="tl-input-wrap">
-          <textarea class="tl-input" id="tl-note-input" rows="${showNotes?1:2}" placeholder="${esc(headerPlaceholder)}"></textarea>
+          ${headerLabelHtml}
+          <textarea class="tl-input" id="tl-note-input" rows="${showNotes?1:2}" placeholder="${esc(headerPlaceholder)}" style="${headerLabel?'border:1px solid #0c447c;':''}"></textarea>
           ${dtInputsHtml}
           ${notesInputHtml}
           ${attendeesHtml}
@@ -4576,10 +4587,17 @@ function _renderFilesTabContent(p){
     if(s<1024*1024*1024)return (s/1024/1024).toFixed(1)+' MB';
     return (s/1024/1024/1024).toFixed(2)+' GB';
   };
-  /* Find emails with attachments to power the Sync button. */
-  const emailsWithAttachments=(p.emails||[]).filter(function(e){return e.hasAttachments;});
+  /* Phase 8v-3c: We can't always trust the hasAttachments flag because
+     legacy imports didn't propagate it. So the Sync button just iterates
+     every email — Graph cheaply returns empty arrays for those without
+     attachments. Count of "known with attachments" still shown for reference. */
+  const emailsCount=(p.emails||[]).length;
+  const emailsKnownAttach=(p.emails||[]).filter(function(e){return e.hasAttachments;}).length;
   const fsaConnected=typeof dataDirHandle!=='undefined'&&!!dataDirHandle;
   const projRefSafe=(p.outlookCategory||p.ref||'project-'+p.id).replace(/[^a-zA-Z0-9._-]/g,'-');
+  const syncLabel=emailsKnownAttach>0
+    ?'Sync from emails ('+emailsKnownAttach+' known + check rest)'
+    :'Sync from emails ('+emailsCount+' to check)';
   const headerBar=
     '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
     +'<div style="font-size:12px;color:#555;flex:1;min-width:200px;">'
@@ -4588,9 +4606,9 @@ function _renderFilesTabContent(p){
         :'<strong style="color:#a87000;">⚠ No data folder connected.</strong> Connect a OneDrive-synced folder via Admin → Snapshots before uploading or syncing files.'
       )
     +'</div>'
-    +(emailsWithAttachments.length
-      ?'<button class="btn btn-sm" '+(fsaConnected?'':'disabled ')+'onclick="_syncProjectAttachmentsFromEmails()" title="Pull attachments from every email on this project that has them">Sync from emails ('+emailsWithAttachments.length+')</button>'
-      :'<button class="btn btn-sm" disabled title="No emails with attachments on this project">Sync from emails</button>')
+    +(emailsCount
+      ?'<button class="btn btn-sm" '+(fsaConnected?'':'disabled ')+'onclick="_syncProjectAttachmentsFromEmails()" title="Check every email on this project for attachments and pull them">'+esc(syncLabel)+'</button>'
+      :'<button class="btn btn-sm" disabled title="No emails on this project yet">Sync from emails</button>')
     +'<button class="btn btn-sm" '+(fsaConnected?'':'disabled ')+'onclick="_uploadProjectFiles()" title="Pick files from your computer">Upload files</button>'
     +'</div>';
   if(!p.files||!p.files.length){
@@ -4720,26 +4738,35 @@ async function _uploadProjectFiles(){
 async function _syncProjectAttachmentsFromEmails(){
   if(!currentProject)return;
   if(!dataDirHandle){alert('No data folder connected. Connect one via Admin → Snapshots first.');return;}
-  const emailsWithAttachments=(currentProject.emails||[]).filter(function(e){return e.hasAttachments;});
-  if(!emailsWithAttachments.length){alert('No emails with attachments on this project.');return;}
-  if(!confirm('Sync attachments from '+emailsWithAttachments.length+' email(s)?\n\nThis fetches each attachment from Microsoft Graph and saves it to your data folder. May take a few seconds per email.'))return;
+  /* Phase 8v-3c: iterate every email on the project. Graph returns an empty
+     attachments array for messages without — so checking is cheap and we
+     don't depend on the local hasAttachments flag (which legacy imports
+     missed). Skip inline "image" attachments (signature logos etc.) to
+     avoid noise — only pull actual file attachments. */
+  const allEmails=currentProject.emails||[];
+  if(!allEmails.length){alert('No emails on this project.');return;}
+  if(!confirm('Check '+allEmails.length+' email(s) for attachments?\n\nThis queries Microsoft Graph for each email. Real file attachments are saved; inline signature images are skipped. Takes a second or two per email.'))return;
   let token;
   try{token=await getAccessToken(['Mail.Read']);}
   catch(e){alert('Auth failed: '+(e.message||e));return;}
   if(!token){alert('Not signed in.');return;}
-  let added=0,skipped=0,failed=0;
-  for(const email of emailsWithAttachments){
+  let added=0,skipped=0,failed=0,checked=0,inlineSkipped=0;
+  for(const email of allEmails){
+    checked++;
     try{
-      const r=await fetch('https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'/attachments?$select=id,name,size,contentType,contentBytes',{headers:{'Authorization':'Bearer '+token}});
+      const r=await fetch('https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'/attachments?$select=id,name,size,contentType,contentBytes,isInline',{headers:{'Authorization':'Bearer '+token}});
       if(!r.ok){failed++;continue;}
       const data=await r.json();
       const atts=data.value||[];
+      /* Now we know the truth — patch the email's hasAttachments locally
+         so subsequent UI matches reality. */
+      email.hasAttachments=atts.length>0;
       for(const att of atts){
-        /* Skip already-synced (match by sourceEmailId + name) */
+        /* Skip inline images (signature logos, embedded screenshots) */
+        if(att.isInline){inlineSkipped++;continue;}
         const already=(currentProject.files||[]).some(function(f){return f.sourceEmailId===email.id&&f.name===att.name;});
         if(already){skipped++;continue;}
         if(!att.contentBytes){failed++;continue;}
-        /* Decode base64 to bytes */
         const bin=atob(att.contentBytes);
         const bytes=new Uint8Array(bin.length);
         for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
@@ -4761,12 +4788,19 @@ async function _syncProjectAttachmentsFromEmails(){
       }
     }catch(err){
       failed++;
-      try{console.warn('[Phase 8v-3b] Attachment sync failed for email',email.id,err);}catch(_){}
+      try{console.warn('[Phase 8v-3c] Attachment sync failed for email',email.id,err);}catch(_){}
     }
   }
   persistProjects();
   renderTab();
-  alert('Sync complete.\n\nAdded: '+added+'\nAlready synced (skipped): '+skipped+(failed?'\nFailed: '+failed:''));
+  const summary=[
+    'Checked: '+checked+' email'+(checked===1?'':'s'),
+    'Added: '+added+' file'+(added===1?'':'s'),
+    skipped?'Already synced (skipped): '+skipped:'',
+    inlineSkipped?'Inline images skipped: '+inlineSkipped:'',
+    failed?'Failed: '+failed:''
+  ].filter(Boolean).join('\n');
+  alert('Sync complete.\n\n'+summary);
 }
 
 let currentTlType='note';
@@ -4793,8 +4827,26 @@ function setTimelineType(t){
 
 function addTimelineItem(){
   const input=document.getElementById('tl-note-input');
-  const text=input.value.trim();
-  if(!text)return;
+  let text=input.value.trim();
+  /* Phase 8v-3c: for calls/meetings, allow notes-only entry by falling back
+     to a generic header. For notes, blank text just exits silently as before. */
+  const notesEl=document.getElementById('tl-entry-notes');
+  const notesText=notesEl&&notesEl.value?notesEl.value.trim():'';
+  const isCallOrMeeting=currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting';
+  if(!text){
+    if(isCallOrMeeting&&notesText){
+      /* Synthesise a header from notes — first line, max 80 chars. */
+      const first=notesText.split('\n')[0]||'';
+      text=first.substring(0,80)||(currentTlType==='meeting'?'Meeting':'Call');
+    }else if(isCallOrMeeting){
+      alert(currentTlType==='meeting'
+        ?'Please enter a Meeting subject in the top field (or Meeting notes below — one of them is required).'
+        :'Please enter a Call header in the top field (or Call notes below — one of them is required).');
+      return;
+    }else{
+      return;
+    }
+  }
   /* Phase 8v-2x: capture the company allocation from the dropdown. Empty
      value means "no specific company" — note shows in the All view but not
      in any company-filtered view (matches user expectation). */
@@ -4842,20 +4894,27 @@ function addTimelineItem(){
     currentProject.timeline.unshift(entry);
     input.value='';
     if(notesEl)notesEl.value='';
-    /* Phase 8v-3b: for meetings, create Teams meeting via Graph (async). */
+    /* Phase 8v-3b: for meetings, create Teams meeting via Graph (async).
+       Phase 8v-3c: show confirmation popup on success so user knows the
+       calendar event was actually pushed. */
     if(currentTlType==='meeting'){
       _createTeamsMeetingForEntry(currentProject,entry).then(function(evt){
         if(evt){
-          /* Save event id + Teams join URL on the timeline entry. */
           entry.calendarEventId=evt.id;
           entry.calendarEventWebLink=evt.webLink||'';
           if(evt.onlineMeeting&&evt.onlineMeeting.joinUrl)entry.teamsJoinUrl=evt.onlineMeeting.joinUrl;
           try{persistProjects();}catch(e){}
           try{renderTab();}catch(e){}
+          /* Confirmation popup. */
+          const dt=(entry.date||'')+(entry.time?' at '+entry.time:'');
+          const attLine=(entry.attendees&&entry.attendees.length)
+            ?'\n\nInvited: '+entry.attendees.map(function(a){return a.name||a.email;}).join(', ')
+            :'\n\nNo attendees invited.';
+          alert('✓ Teams meeting created\n\nSubject: '+(entry.text||'Project meeting')+'\nWhen: '+dt+'\nDuration: '+(entry.duration||60)+' min'+attLine+'\n\nAdded to your Outlook calendar with Teams join button. Click "Join Teams meeting" on the timeline entry to join.');
         }
       }).catch(function(err){
-        try{console.warn('[Phase 8v-3b] Teams meeting creation failed',err);}catch(_){}
-        alert('Meeting saved in CRM, but Teams meeting creation failed:\n\n'+(err.message||err)+'\n\nThe CRM entry is intact. Check Calendars.ReadWrite permission in Azure.');
+        try{console.warn('[Phase 8v-3b/3c] Teams meeting creation failed',err);}catch(_){}
+        alert('⚠ Meeting saved in CRM, but Teams meeting creation failed:\n\n'+(err.message||err)+'\n\nThe CRM entry is intact. Check Calendars.ReadWrite permission in Azure.');
       });
     }
     persistProjects();
@@ -6404,7 +6463,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07x · calls+meetings+files+body'
+      build:'2026-05-07y · files-sync+meeting-fix'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6569,7 +6628,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07x · calls+meetings+files+body';
+const BACKUP_BUILD='2026-05-07y · files-sync+meeting-fix';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8146,7 +8205,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07x · calls+meetings+files+body','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07y · files-sync+meeting-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
