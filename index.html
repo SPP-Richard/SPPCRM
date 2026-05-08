@@ -673,8 +673,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" onclick="setNav(this,'won')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l3.5 3.5L13 5"/></svg>Won</div>
     <div class="ni" onclick="setNav(this,'lost')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8"/></svg>Lost</div>
     <div class="ns" style="margin-top:8px;">Alerts</div>
-    <div class="ni" onclick="setNav(this,'flagged')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 10.5v.5"/></svg>Empty records<span class="nb" id="sb-empty-badge">0</span></div>
-    <div class="ni" onclick="setNav(this,'reminders')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2a5 5 0 100 10A5 5 0 008 2zM8 12v2M5 14h6"/></svg>Reminders due<span class="nb-warn" id="sb-rem-badge">0</span></div>
+    <div class="ni" onclick="setNav(this,'chase')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 10.5v.5"/></svg>To chase<span class="nb" id="sb-empty-badge">0</span></div>
+    <div class="ni" onclick="setNav(this,'followup')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2a5 5 0 100 10A5 5 0 008 2zM8 12v2M5 14h6"/></svg>Follow-up due<span class="nb-warn" id="sb-rem-badge">0</span></div>
     <div class="ns" style="margin-top:8px;">Reports</div>
     <div class="ni" onclick="setNav(this,'reports')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="2" width="10" height="12" rx="1"/><path d="M6 5h4M6 8h4M6 11h2"/></svg>Reports</div>
     <div class="ns" style="margin-top:8px;">Tools</div>
@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08f · search-broaden-site-address</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08g · stat-cards-to-action-snooze</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -735,15 +735,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       </div>
       <div class="stats-row">
         <div class="stat-card info" onclick="statCardNav('active',this)" style="cursor:pointer;"><div class="stat-icon info"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#185fa5" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 8h6M8 5v6"/></svg></div><div class="stat-label">Active projects</div><div class="stat-val" id="sc-active">0</div><div class="stat-sub">Spec + quoting</div></div>
-        <div class="stat-card warn" onclick="statCardNav('flagged',this)" style="cursor:pointer;"><div class="stat-icon warn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 11v.5"/></svg></div><div class="stat-label">Empty records</div><div class="stat-val" id="sc-empty">0</div><div class="stat-sub">Need detail chased</div></div>
-        <div class="stat-card danger" onclick="statCardNav('reminders',this)" style="cursor:pointer;"><div class="stat-icon danger"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#a32d2d" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11v.5"/></svg></div><div class="stat-label">Reminders due</div><div class="stat-val" id="sc-rem">0</div><div class="stat-sub">Follow-ups overdue</div></div>
-        <div class="stat-card success" onclick="statCardNav('quoting',this)" style="cursor:pointer;"><div class="stat-icon success"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#3b6d11" stroke-width="1.5"><path d="M2 4h12M2 8h8M2 12h10"/></svg></div><div class="stat-label">Currently quoting</div><div class="stat-val" id="sc-quoting">0</div><div class="stat-sub">Active quote requests</div></div>
+        <div class="stat-card warn" onclick="statCardNav('chase',this)" style="cursor:pointer;"><div class="stat-icon warn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 11v.5"/></svg></div><div class="stat-label">New projects to chase</div><div class="stat-val" id="sc-empty">0</div><div class="stat-sub">No contacts &amp; no emails</div></div>
+        <div class="stat-card danger" onclick="statCardNav('followup',this)" style="cursor:pointer;"><div class="stat-icon danger"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#a32d2d" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11v.5"/></svg></div><div class="stat-label">Projects needing follow-up</div><div class="stat-val" id="sc-rem">0</div><div class="stat-sub">Due this month or earlier</div></div>
+        <div class="stat-card success" onclick="statCardNav('stale',this)" style="cursor:pointer;"><div class="stat-icon success"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#3b6d11" stroke-width="1.5"><path d="M2 4h12M2 8h8M2 12h10"/></svg></div><div class="stat-label">No changes in 3 months</div><div class="stat-val" id="sc-quoting">0</div><div class="stat-sub">Excludes won &amp; lost</div></div>
       </div>
       <!-- Chase Queue: overdue non-critical reminders past due-date + 7 days -->
       <div class="chase-queue" id="chase-queue">
         <div class="chase-header">
-          <div class="chase-title">Chase Queue <span class="chase-count empty" id="chase-count-badge">0</span></div>
-          <div class="chase-sub" id="chase-sub">Non-critical reminders overdue by 7+ days. Push to calendar, mark done, or snooze.</div>
+          <div class="chase-title">To action <span class="chase-count empty" id="chase-count-badge">0</span></div>
+          <div class="chase-sub" id="chase-sub">Project reminders that are overdue or due in the next 7 days. Snooze 3 days creates a fresh reminder + calendar entry; mark done clears it.</div>
           <button class="chase-force-all" id="chase-force-all" onclick="chasePushAll()" style="display:none;">Admin: push all to calendar</button>
         </div>
         <div class="chase-list" id="chase-list"></div>
@@ -3848,6 +3848,37 @@ function _projectSearchFields(p){
   }
   return out.filter(Boolean);
 }
+/* Phase 8v-3k: predicate helpers for the redefined dashboard cards.
+   - "To chase" / chase: a project that has neither contacts nor emails
+     attached. Replaces the old flagged-based count — flagged is a manual
+     marker, this is structural. The card asks "what new projects do I
+     still need to populate?"
+   - "Follow-up due" / followup: a project whose followUp date falls within
+     the current month or any earlier month (i.e. anything not in a future
+     month). Doesn't require the date to have passed today; it's about the
+     planning horizon, "is the deadline this month or earlier?".
+   - "No changes in 3 months" / stale: project not won or lost AND
+     lastUpdated >= 90 days ago. Surfaces deals that have gone quiet. */
+function _isProjectToChase(p){
+  if(!p)return false;
+  const noContacts=!Array.isArray(p.contacts)||p.contacts.length===0;
+  const noEmails=!Array.isArray(p.emails)||p.emails.length===0;
+  return noContacts&&noEmails;
+}
+function _isProjectFollowUpDue(p){
+  if(!p||!p.followUp)return false;
+  const now=new Date();
+  const cutoff=new Date(now.getFullYear(),now.getMonth()+1,1).toISOString().slice(0,10);
+  /* followUp < first day of next month → due this month or earlier. */
+  return p.followUp<cutoff;
+}
+function _isProjectStale(p){
+  if(!p)return false;
+  if(p.stage==='won'||p.stage==='lost')return false;
+  if(!p.lastUpdated)return true; /* never updated = definitely stale */
+  const ms=Date.now()-new Date(p.lastUpdated).getTime();
+  return ms>=90*86400*1000;
+}
 function getFiltered(q,sf){
   const s=(q||'').toLowerCase();
   return projects.filter(p=>{
@@ -3855,6 +3886,11 @@ function getFiltered(q,sf){
     let mf=true;
     if(sf==='active')mf=p.stage==='spec'||p.stage==='quoting';
     else if(sf==='spec'||sf==='quoting'||sf==='won'||sf==='lost')mf=p.stage===sf;
+    else if(sf==='chase')mf=_isProjectToChase(p);
+    else if(sf==='followup')mf=_isProjectFollowUpDue(p);
+    else if(sf==='stale')mf=_isProjectStale(p);
+    /* Phase 8v-3k: legacy 'flagged' / 'reminders' filters still routable
+       so old links / chase-queue clicks keep working. */
     else if(sf==='flagged')mf=!!p.flagged;
     else if(sf==='reminders')mf=(p.reminders||[]).some(r=>!r.done&&r.date&&r.date<=today());
     /* 'all' falls through to true */
@@ -3863,10 +3899,15 @@ function getFiltered(q,sf){
   });
 }
 
-function countEmpty(){return projects.filter(p=>p.flagged).length;}
-function countRemDue(){return projects.filter(p=>(p.reminders||[]).some(r=>!r.done&&r.date&&r.date<=today())).length;}
+function countToChase(){return projects.filter(_isProjectToChase).length;}
+function countFollowUpDue(){return projects.filter(_isProjectFollowUpDue).length;}
+function countStale(){return projects.filter(_isProjectStale).length;}
 function countActive(){return projects.filter(p=>p.stage==='spec'||p.stage==='quoting').length;}
-function countQuoting(){return projects.filter(p=>p.stage==='quoting').length;}
+/* Kept for any legacy callers; chase queue uses the project-reminder count
+   directly via _toActionItems(). */
+function countEmpty(){return countToChase();}
+function countRemDue(){return countFollowUpDue();}
+function countQuoting(){return countStale();}
 
 function updateSidebarBadges(){
   const eb=document.getElementById('sb-empty-badge'),rb=document.getElementById('sb-rem-badge');
@@ -3894,92 +3935,177 @@ function isCurrentUserAdmin(){
   const me=salesReps.find(r=>r.name===ME);
   return !!(me&&me.admin);
 }
+/* Phase 8v-3k: build the To-Action list from PROJECT reminders. The old
+   Chase Queue iterated company-note reminders; that source is mostly
+   unused in the project-centric flow. The new queue picks up any reminder
+   on any project that is not done AND whose date is overdue or within the
+   next 7 days. Sorted by date soonest first. */
+function _toActionItems(){
+  const today=new Date();
+  const todayIso=today.toISOString().slice(0,10);
+  const cutoff=new Date(today.getTime()+7*86400*1000).toISOString().slice(0,10);
+  const items=[];
+  for(const p of projects||[]){
+    const reps=p.reminders||[];
+    for(const r of reps){
+      if(!r||r.done)continue;
+      if(!r.date)continue;
+      if(r.date>cutoff)continue; /* future, not yet within the 7-day window */
+      const overdue=r.date<todayIso;
+      const days=Math.floor((today.getTime()-new Date(r.date).getTime())/(86400*1000));
+      items.push({
+        projectId:p.id,
+        projectName:p.name||'(unnamed project)',
+        projectRef:p.ref||'',
+        reminderId:r.id,
+        text:r.text||'(no text)',
+        date:r.date,
+        notes:r.notes||'',
+        overdue:overdue,
+        days:days, /* negative = future, 0 = today, positive = overdue */
+        company:r.company||''
+      });
+    }
+  }
+  items.sort((a,b)=>a.date.localeCompare(b.date));
+  return items;
+}
 function renderChaseQueue(){
   const list=document.getElementById('chase-list');
   const countBadge=document.getElementById('chase-count-badge');
-  const subEl=document.getElementById('chase-sub');
   const forceBtn=document.getElementById('chase-force-all');
   if(!list||!countBadge)return;
-  const isAdmin=isCurrentUserAdmin();
-  const today=new Date();const todayIso=today.toISOString().slice(0,10);
-  /* Build a lookup from lowercased company name -> display name via deriveCompanies */
-  const byName=deriveCompanies();
-  const items=[];
-  Object.entries(companyOverrides).forEach(([key,ov])=>{
-    const display=(byName[key]&&byName[key].name)||key;
-    (ov.noteEntries||[]).forEach(n=>{
-      const rem=n.reminder;
-      if(!rem||rem.done||rem.critical)return;
-      /* Auto-re-chase: a chased reminder re-enters the queue once
-         today passes autoChaseNext (set 7 days after the push). */
-      if(rem.chased){
-        if(rem.autoChaseNext&&rem.autoChaseNext<=todayIso){
-          delete rem.chased;delete rem.autoChaseNext;
-        }else{return;}
-      }
-      if(!rem.date)return;
-      /* Threshold: snooze is an exact lift-until date set on snooze action;
-         otherwise the item is queued 7 days after the original due date. */
-      let threshold;
-      if(rem.snoozedUntil){threshold=rem.snoozedUntil;}
-      else{const t=new Date(rem.date);t.setDate(t.getDate()+7);threshold=t.toISOString().slice(0,10);}
-      if(threshold>todayIso)return;
-      const repName=ov.rep||'';
-      if(!isAdmin&&repName!==ME)return;
-      const daysOverdue=Math.max(0,Math.floor((today-new Date(rem.date))/(1000*60*60*24)));
-      items.push({key,noteId:n.id,companyDisplay:display,text:rem.text||'(no text)',date:rem.date,rep:repName||'Unassigned',days:daysOverdue});
-    });
-  });
-  items.sort((a,b)=>b.days-a.days);
+  const items=_toActionItems();
   countBadge.textContent=items.length;
   countBadge.className='chase-count'+(items.length===0?' empty':'');
-  if(subEl){
-    subEl.textContent=isAdmin
-      ? 'Non-critical reminders across all reps, 7+ days overdue. Push to calendar, mark done, or snooze.'
-      : 'Your non-critical reminders, 7+ days overdue. Push to calendar, mark done, or snooze.';
-  }
-  if(forceBtn){forceBtn.style.display=(isAdmin&&items.length>0)?'inline-block':'none';}
+  if(forceBtn)forceBtn.style.display='none'; /* legacy admin push-all hidden */
   if(items.length===0){
-    list.innerHTML='<div class="chase-empty">All clear — no chases pending.</div>';
+    list.innerHTML='<div class="chase-empty">All clear — no reminders due this week.</div>';
     return;
   }
-  list.innerHTML=items.map(it=>`
-    <div class="chase-row">
-      <div>
-        <div class="cq-co">${esc(it.companyDisplay)}</div>
-        <div class="cq-rep">Rep: ${esc(it.rep)}</div>
-      </div>
-      <div>
-        <div class="cq-txt">${esc(it.text)}</div>
-        <div class="cq-days">${it.days} days overdue · due ${esc(fmtDate(it.date))}</div>
-      </div>
-      <button class="primary" onclick="chaseAction('push','${esc(it.key)}','${esc(it.noteId)}')" title="Create Outlook calendar event (stub in prototype)">Push to calendar</button>
-      <button onclick="chaseAction('snooze','${esc(it.key)}','${esc(it.noteId)}')" title="Push 7 days out, re-enters queue after that">Snooze 7 days</button>
-      <button onclick="chaseAction('done','${esc(it.key)}','${esc(it.noteId)}')" title="Mark the reminder complete">Mark done</button>
-    </div>
-  `).join('');
+  list.innerHTML=items.map(function(it){
+    const dateLabel=fmtDate(it.date)||it.date;
+    const ageLabel=it.overdue
+      ?'<span style="color:#a62929;font-weight:600;">'+it.days+' day'+(it.days===1?'':'s')+' overdue</span>'
+      :(it.days===0
+          ?'<span style="color:#a87000;font-weight:600;">Due today</span>'
+          :'<span style="color:#3b6d11;">Due in '+(-it.days)+' day'+(it.days===-1?'':'s')+'</span>');
+    const projLabel=it.projectRef?(it.projectRef+' · '+it.projectName):it.projectName;
+    const compChip=it.company?'<span style="display:inline-block;background:#eef4fb;color:#0c447c;border:1px solid #d3dce6;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;">'+esc(it.company)+'</span>':'';
+    return '<div class="chase-row">'
+      +'<div>'
+        +'<div class="cq-co">'+esc(projLabel)+compChip+'</div>'
+        +'<div class="cq-rep">Due '+esc(dateLabel)+' · '+ageLabel+'</div>'
+      +'</div>'
+      +'<div>'
+        +'<div class="cq-txt">'+esc(it.text)+'</div>'
+        +(it.notes?'<div class="cq-days" style="color:#777;">'+esc(it.notes.substring(0,140))+(it.notes.length>140?'…':'')+'</div>':'')
+      +'</div>'
+      +'<button class="primary" onclick="toActionOpen('+it.projectId+')" title="Open project">Open project</button>'
+      +'<button onclick="toActionSnooze('+it.projectId+',\''+esc(it.reminderId)+'\')" title="Mark this reminder done and create a fresh one for 3 days time, with a new calendar entry referring back">Snooze 3 days</button>'
+      +'<button onclick="toActionDone('+it.projectId+',\''+esc(it.reminderId)+'\')" title="Mark the reminder complete">Mark done</button>'
+      +'</div>';
+  }).join('');
 }
-function chaseAction(act,key,noteId){
-  const ov=companyOverrides[key];if(!ov)return;
-  const n=(ov.noteEntries||[]).find(x=>x.id===noteId);if(!n||!n.reminder)return;
-  if(act==='done'){n.reminder.done=true;}
-  else if(act==='snooze'){
-    /* Lift for exactly 7 days from today. snoozedUntil is the date the
-       item is allowed back into the queue. */
-    const d=new Date();d.setDate(d.getDate()+7);
-    n.reminder.snoozedUntil=d.toISOString().slice(0,10);
+/* Phase 8v-3k: open the project record from a To-Action row. Same path
+   as clicking a project card. */
+function toActionOpen(projectId){
+  const p=projects.find(function(x){return x.id===projectId;});
+  if(!p)return;
+  openProject(projectId);
+}
+/* Mark a project reminder done. Mirrors the "Mark as completed" tick on
+   the reminder modal: flips local state + PATCHes the calendar event
+   subject to ✓ COMPLETED if one exists. */
+async function toActionDone(projectId,reminderId){
+  const p=projects.find(function(x){return x.id===projectId;});
+  if(!p)return;
+  const r=(p.reminders||[]).find(function(x){return x.id===reminderId;});
+  if(!r||r.done)return;
+  r.done=true;
+  /* Mirror onto timeline entry if present. */
+  const ti=(p.timeline||[]).find(function(x){return x.remId===reminderId;});
+  if(ti)ti.done=true;
+  persistProjects();
+  if(r.calendarEventId){
+    const baseSubj=r.calendarEventSubject||(r.text?'Reminder: '+r.text:'Reminder');
+    _updateOutlookEventCompletion(r.calendarEventId,true,baseSubj)
+      .then(function(updated){if(updated&&updated.subject){r.calendarEventSubject=updated.subject;try{persistProjects();}catch(e){}}})
+      .catch(function(err){try{console.warn('[Phase 8v-3k] Calendar mark-done failed',err);}catch(_){}});
   }
-  else if(act==='push'){
-    /* Mark as chased, and set an auto-rechase date 7 days ahead so the
-       item re-enters the queue if it isn't marked done in the meantime. */
-    const d=new Date();d.setDate(d.getDate()+7);
-    n.reminder.chased=true;
-    n.reminder.autoChaseNext=d.toISOString().slice(0,10);
-    alert('Push to Outlook calendar\n\nIn production this creates a calendar event (today, 30 min) on the rep\'s Outlook calendar via Microsoft Graph. The reminder is marked as chased and drops off the queue.\n\nIf not marked done within 7 days ('+n.reminder.autoChaseNext+'), a fresh calendar entry referring back to this one is auto-generated and the item re-appears in the Chase Queue.\n\nReminder text:\n"'+n.reminder.text+'"');
-  }
-  persistCompanyOverrides();
   renderChaseQueue();
-  if(currentCompany&&currentCompany.toLowerCase()===key)renderCompanyTab();
+}
+/* Phase 8v-3k: snooze 3 days. Marks the original done (with calendar
+   ✓ COMPLETED), creates a NEW reminder dated +3 days with a notes line
+   referencing the original, and pushes a fresh calendar entry to Outlook.
+   The new reminder also lands in the project's timeline so the trail is
+   visible. */
+async function toActionSnooze(projectId,reminderId){
+  const p=projects.find(function(x){return x.id===projectId;});
+  if(!p)return;
+  const r=(p.reminders||[]).find(function(x){return x.id===reminderId;});
+  if(!r){alert('Reminder not found.');return;}
+  /* New date: 3 days from today (YYYY-MM-DD). */
+  const d=new Date();d.setDate(d.getDate()+3);
+  const newDate=d.toISOString().slice(0,10);
+  const origDateLabel=fmtDate(r.date)||r.date||'(no date)';
+  const newText=r.text||'Follow up';
+  const stitchedNotes=
+    'Snoozed from reminder originally due '+origDateLabel+': "'+(r.text||'(no text)')+'"\n'
+    +(r.notes?'Original notes:\n'+r.notes:'');
+  const newId=uid();
+  const newRem={
+    id:newId,
+    text:newText,
+    date:newDate,
+    soon:newDate<=today(),
+    done:false,
+    notes:stitchedNotes,
+    snoozedFrom:reminderId
+  };
+  if(r.company)newRem.company=r.company;
+  p.reminders.push(newRem);
+  /* Mirror to timeline so the snooze is visible in the project history. */
+  const tlEntry={id:uid(),type:'reminder',date:newDate,author:ME,action:'snoozed a reminder',remText:newText,remNotes:stitchedNotes,done:false,remId:newId};
+  if(r.company)tlEntry.company=r.company;
+  p.timeline.unshift(tlEntry);
+  /* Mark original done + mirror onto its timeline entry. */
+  r.done=true;
+  const origTi=(p.timeline||[]).find(function(x){return x.remId===reminderId;});
+  if(origTi)origTi.done=true;
+  persistProjects();
+  /* Update the original calendar event to ✓ COMPLETED (best-effort). */
+  if(r.calendarEventId){
+    const baseSubj=r.calendarEventSubject||(r.text?'Reminder: '+r.text:'Reminder');
+    _updateOutlookEventCompletion(r.calendarEventId,true,baseSubj)
+      .catch(function(err){try{console.warn('[Phase 8v-3k] Calendar mark-original-done failed',err);}catch(_){}});
+  }
+  /* Create a new calendar event for the snoozed reminder using the same
+     project-reminder helper used by setProjectReminder. The "due time"
+     defaults to current time on the snooze date — same convention as the
+     existing reminder push. */
+  try{
+    const now=new Date();
+    const due=new Date(newDate+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
+    const projUrl=_buildProjectDeepLink(p.id);
+    const pseudoEmail={subject:newText,fromEmail:'',from:'',webLink:projUrl};
+    _createOutlookFollowUpEvent(p,pseudoEmail,due.toISOString(),{note:stitchedNotes})
+      .then(function(evt){
+        const fresh=p.reminders.find(function(x){return x.id===newId;});
+        if(fresh){
+          fresh.calendarEventId=evt.id;
+          fresh.calendarEventWebLink=evt.webLink||'';
+          fresh.calendarEventSubject=evt.subject||'';
+          try{persistProjects();}catch(e){}
+        }
+      })
+      .catch(function(err){
+        try{console.warn('[Phase 8v-3k] Snooze calendar push failed',err);}catch(_){}
+        alert('Snoozed reminder saved in CRM, but Outlook calendar push failed:\n\n'+(err.message||err)+'\n\nThe new reminder is intact. Check Calendars.ReadWrite in Azure.');
+      });
+  }catch(e){try{console.warn('[Phase 8v-3k] Snooze push setup failed',e);}catch(_){}}
+  renderChaseQueue();
+  if(currentProject&&currentProject.id===projectId)renderTab();
 }
 /* Inbox scan state. In production this lives in the user's Settings row
    in a SharePoint Users List. Here it's in-memory + localStorage so the
@@ -4381,7 +4507,7 @@ function setNav(el,view){
   document.getElementById('project-screen').classList.remove('visible');
   document.getElementById('dashboard-screen').style.display='flex';
   currentView=view;
-  const labels={active:'Active projects',spec:'Spec stage',quoting:'Quoting',won:'Won',lost:'Lost',flagged:'Empty records',reminders:'Reminders due'};
+  const labels={active:'Active projects',spec:'Spec stage',quoting:'Quoting',won:'Won',lost:'Lost',chase:'New projects to chase',followup:'Projects needing follow-up',stale:'No changes in 3 months',flagged:'Empty records',reminders:'Reminders due'};
   document.getElementById('dash-title').textContent=labels[view]||'Projects';
   stageFilter=view;
   /* Filter pills only make sense for active/spec/quoting views */
@@ -4397,13 +4523,13 @@ function setNav(el,view){
 }
 
 function statCardNav(view,el){
-  /* Mimic clicking a sidebar item — keeps the sidebar active state in sync.
-     Sidebar order: 0 Active projects, 1 Spec, 2 Quoting, 3 All companies,
-                    4 Won, 5 Lost, 6 Empty records, 7 Reminders due,
-                    8 Scan inbox, 9 Bulk import, 10 Manage reps, 11 Initial scan */
-  const map={active:0,flagged:6,reminders:7,quoting:2};
+  /* Phase 8v-3k: card → sidebar mapping. Cards 1-3 (active / chase /
+     followup) align with sidebar entries; card 4 (stale) has no sidebar
+     entry by design — it's a derived view. setNav handles a null el by
+     just not highlighting anything in the sidebar. */
+  const map={active:0,chase:6,followup:7};
   const navItems=document.querySelectorAll('.sidebar .ni');
-  const targetEl=navItems[map[view]];
+  const targetEl=Object.prototype.hasOwnProperty.call(map,view)?navItems[map[view]]:null;
   setNav(targetEl,view);
 }
 
@@ -4427,7 +4553,7 @@ function _projectFollowUpCell(p){
 }
 function filterProjects(q){
   const f=getFiltered(q,stageFilter);
-  const labels={active:'Active projects',spec:'Spec',quoting:'Quoting',won:'Won',lost:'Lost',flagged:'Empty records',reminders:'Reminders due',all:'All projects'};
+  const labels={active:'Active projects',spec:'Spec',quoting:'Quoting',won:'Won',lost:'Lost',chase:'New projects to chase',followup:'Projects needing follow-up',stale:'No changes in 3 months',flagged:'Empty records',reminders:'Reminders due',all:'All projects'};
   document.getElementById('list-label').textContent=(labels[stageFilter]||'Projects')+' ('+f.length+')';
   document.getElementById('projects-list').innerHTML=f.map(p=>`
     <div class="pc${p.flagged?' flagged':''}${currentProject&&currentProject.id===p.id?' sel':''}" onclick="openProject(${p.id})">
@@ -7065,7 +7191,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08f · search-broaden-site-address'
+      build:'2026-05-08g · stat-cards-to-action-snooze'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7230,7 +7356,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08f · search-broaden-site-address';
+const BACKUP_BUILD='2026-05-08g · stat-cards-to-action-snooze';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8812,7 +8938,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08f · search-broaden-site-address','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08g · stat-cards-to-action-snooze','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
