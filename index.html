@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07u · outlook-categories</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07v · emails-redesign+follow-up</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -2724,6 +2724,77 @@ async function _applyProjectCategoryToEmails(project,opts){
 async function _retagProjectEmails(project){
   return await _applyProjectCategoryToEmails(project,{silent:true});
 }
+/* Phase 8v-2z: create an Outlook calendar event as a follow-up for a
+   specific email. Uses Calendars.ReadWrite which is already in our scopes.
+   Returns the created event so callers can store its id (for later cancel).
+   tz hard-coded to Europe/London — SPP is UK-based. If we ever onboard
+   non-UK users this needs reading from the user's mailbox settings. */
+async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
+  const token=await getAccessToken(['Calendars.ReadWrite']);
+  if(!token)throw new Error('Calendar push: not signed in or Calendars.ReadWrite not granted');
+  const startIso=dueIso;
+  const endIso=new Date(new Date(dueIso).getTime()+30*60*1000).toISOString();
+  const senderName=email.from||email.fromEmail||'Unknown';
+  const senderEmail=email.fromEmail||'';
+  const subject=email.subject||'(no subject)';
+  const projName=project&&project.name||'Project';
+  const projRef=project&&(project.outlookCategory||project.ref)||'';
+  const noteHtml=(opts&&opts.note)?'<p><strong>Note:</strong> '+(opts.note).replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';})+'</p>':'';
+  const link=email.webLink?'<p><a href="'+email.webLink+'">Open original email in Outlook ↗</a></p>':'';
+  const bodyHtml=
+    '<p>Follow-up reminder from SPP CRM.</p>'
+    +'<p><strong>Project:</strong> '+projName.replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';})+(projRef?' ('+projRef+')':'')+'</p>'
+    +'<p><strong>From:</strong> '+senderName.replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';})+(senderEmail?' &lt;'+senderEmail+'&gt;':'')+'</p>'
+    +'<p><strong>Subject:</strong> '+subject.replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';})+'</p>'
+    +noteHtml
+    +link;
+  const evt={
+    subject:'Follow up: '+subject.substring(0,180),
+    start:{dateTime:_isoToCalendarLocal(startIso),timeZone:'Europe/London'},
+    end:{dateTime:_isoToCalendarLocal(endIso),timeZone:'Europe/London'},
+    body:{contentType:'HTML',content:bodyHtml},
+    categories:project&&project.outlookCategory?[project.outlookCategory]:[],
+    reminderMinutesBeforeStart:15,
+    isReminderOn:true
+  };
+  const r=await fetch('https://graph.microsoft.com/v1.0/me/events',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify(evt)
+  });
+  if(!r.ok){
+    let detail='';try{const j=await r.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(_){}
+    throw new Error('Calendar event creation failed: HTTP '+r.status+(detail?' — '+detail:''));
+  }
+  return await r.json();
+}
+/* Cancel/delete a previously-created calendar event (used when user unflags
+   a follow-up). Best-effort — non-200 responses are logged but don't throw,
+   since the local reminder is the source of truth. */
+async function _deleteOutlookEvent(eventId){
+  if(!eventId)return;
+  try{
+    const token=await getAccessToken(['Calendars.ReadWrite']);
+    if(!token)return;
+    await fetch('https://graph.microsoft.com/v1.0/me/events/'+encodeURIComponent(eventId),{
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+token}
+    });
+  }catch(e){try{console.warn('[Phase 8v-2z] Failed to delete calendar event',e);}catch(_){}}
+}
+/* Graph wants a date-time without the trailing Z and with Europe/London-style
+   wall-clock format. Convert ISO UTC to a "naive" local string for the timezone
+   we declare alongside it. Simple approach: take the ISO, strip the Z, return. */
+function _isoToCalendarLocal(iso){
+  if(!iso)return '';
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return iso;
+  /* Format as YYYY-MM-DDTHH:MM:SS in local time. Browser's local tz will be
+     close enough to Europe/London for SPP UK users. If user is travelling
+     this could shift by an hour — acceptable for a follow-up reminder. */
+  const pad=function(n){return String(n).padStart(2,'0');};
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
 /* Phase 8v-2y: post-action banner for the inbox-scan modal that surfaces
    the Outlook tagging result. Green for full success, amber for partial,
    red for total fail (typically auth — Mail.ReadWrite not granted). */
@@ -3911,7 +3982,7 @@ function filterProjects(q){
 
 function openProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all';
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; _emailTabInit();
   document.getElementById('dashboard-screen').style.display='none';
   document.getElementById('project-screen').classList.add('visible');
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
@@ -3949,7 +4020,7 @@ function filterMiniList(q){renderMiniList(q);}
 
 function switchProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all';
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; _emailTabInit();
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
   /* Phase 8v-2y: surface the Outlook category in the project header so it's
      visible without scrolling the Overview tab. */
@@ -4192,108 +4263,11 @@ function renderTab(){
     body.innerHTML=rg('Architect',arch,'ca-a')+rg('Main contractor',mc,'ca-m')+rg('Sub-contractors',sub,'ca-s')+rg('Unassigned',unassigned,'ca-u')||'<div style="color:#aaa;font-size:13px;">No contacts recorded.</div>';
 
   } else if(currentTab==='emails'){
-    /* Phase 8v-2t: render emails even when no roles assigned — auto-imported
-       emails default to role:'' so the original architect/mc/sub-only filter
-       hid them. Now we add an Unassigned tab whenever any emails lack a role,
-       and fall back to it if no roles exist at all. */
-    if(!p.emails.length){body.innerHTML='<div style="color:#aaa;font-size:13px;">No emails logged yet.</div>';return;}
-    const roles=['architect','mc','sub'],rl={architect:'Architect',mc:'Main contractor',sub:'Sub-contractors',unassigned:'Unassigned'};
-    const avail=roles.filter(r=>p.emails.some(e=>e.role===r));
-    const hasUnassigned=p.emails.some(e=>!e.role||(e.role!=='architect'&&e.role!=='mc'&&e.role!=='sub'));
-    const allTabs=avail.slice();
-    if(hasUnassigned)allTabs.push('unassigned');
-    if(!allTabs.includes(currentEmailRole))currentEmailRole=allTabs[0];
-    const roleEmails=currentEmailRole==='unassigned'
-      ?p.emails.filter(e=>!e.role||(e.role!=='architect'&&e.role!=='mc'&&e.role!=='sub'))
-      :p.emails.filter(e=>e.role===currentEmailRole);
-    const companies=[...new Set(roleEmails.map(e=>e.company||'(no company)'))];
-    const subtabs=allTabs.map(r=>`<button class="est-tab${r===currentEmailRole?' active':''}" onclick="setEmailRole('${r}')">${rl[r]}</button>`).join('');
-    /* Phase 8v-2u: three-level hierarchy: company → thread → email.
-       Threads are clusters of emails sharing a conversationId. Within a
-       thread, emails sort by date asc so the back-and-forth reads naturally. */
-    const coBlocks=companies.map(co=>{
-      const ces=roleEmails.filter(e=>(e.company||'(no company)')===co);
-      const isOpen=expanded[co]===true;
-      /* Phase 8v-2y: prefer the category-based search URL (reliable filter
-         using SPP-CRM-* tag we applied to project emails). Falls back to
-         the older keyword/domain search if no category exists yet
-         (e.g. legacy projects from before 8v-2y). */
-      const coSearchUrl=p.outlookCategory?_buildProjectCompanyCategoryUrl(p,co):_buildOutlookCompanySearchUrl(p,co);
-      /* Cluster emails into threads by conversationId. Emails without a
-         conversationId each go in their own thread. */
-      const threads=new Map();
-      ces.forEach(e=>{
-        const k=e.conversationId||'__solo-'+e.id;
-        if(!threads.has(k))threads.set(k,[]);
-        threads.get(k).push(e);
-      });
-      /* Sort threads by latest message date desc — most recent activity first. */
-      const sortedThreads=[...threads.values()].map(arr=>{
-        arr.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-        return arr;
-      }).sort((a,b)=>(b[b.length-1].date||'').localeCompare((a[a.length-1].date||'')));
-      const threadBlocks=isOpen?sortedThreads.map(thread=>{
-        const lead=thread[0];
-        const last=thread[thread.length-1];
-        const threadKey='thread:'+co+':'+(lead.conversationId||lead.id);
-        /* Phase 8v-2v: HTML-escape JSON-stringified args. Bare JSON quotes
-           inside double-quoted onclick attributes break parsing. */
-        const threadKeyAttr=JSON.stringify(threadKey).replace(/"/g,'&quot;');
-        const tIsOpen=expanded[threadKey]===true;
-        const subjLine=esc((lead.subject||'(no subject)').replace(/^(re|fw|fwd|re:|fw:|fwd:)[\s:]*/i,'').trim()||'(no subject)');
-        const dateRange=thread.length===1
-          ?(fmtDate(lead.date)||lead.date||'')
-          :(fmtDate(lead.date)||lead.date)+' → '+(fmtDate(last.date)||last.date);
-        const msgsHtml=tIsOpen?thread.map(e=>{
-          const author=e.isOutbound?'Richard (you)':esc(e.from||e.fromEmail||'?');
-          const dateLbl=esc(fmtDate(e.date)||e.date||'');
-          const preview=(e.points&&e.points[0])?esc(String(e.points[0]).substring(0,140)):'';
-          /* Phase 8v-2w: use Graph's webLink (reliable) over the constructed
-             URL pattern (which only opens the inbox folder, not the message). */
-          const olUrl=e.webLink||(e.id?'https://outlook.office.com/owa/?ItemID='+encodeURIComponent(e.id)+'&exvsurl=1&viewmodel=ReadMessageItem':'');
-          const olLink=olUrl?'<a href="'+esc(olUrl)+'" target="_blank" style="font-size:10px;color:#0c447c;text-decoration:none;flex-shrink:0;margin-left:8px;" title="Open this email in Outlook" onclick="event.stopPropagation()">Open ↗</a>':'';
-          return '<div data-email-id="'+esc(e.id||'')+'" style="padding:8px 10px;border-bottom:1px solid #f5f5f3;background:'+(e.isOutbound?'#f7faff':'#fff')+';">'
-            +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:3px;">'
-              +'<div style="min-width:0;flex:1;">'
-                +'<div style="font-size:12px;font-weight:500;color:#222;">'+author+(e.isOutbound?' <span style="color:#0c447c;font-size:10px;font-weight:400;">↗ outbound</span>':'')+'</div>'
-                +'<div style="font-size:12px;color:#555;margin-top:1px;">'+esc(e.subject||'(no subject)')+'</div>'
-              +'</div>'
-              +'<div style="font-size:10px;color:#aaa;text-align:right;flex-shrink:0;">'+dateLbl+olLink+'</div>'
-            +'</div>'
-            +(preview?'<div style="font-size:11px;color:#888;margin-top:4px;line-height:1.4;">'+preview+'</div>':'')
-            +'</div>';
-        }).join(''):'';
-        const tHeader=
-          '<div class="eco-thread" style="margin:6px 0;border:1px solid #ebebe6;border-radius:6px;overflow:hidden;">'
-          +'<div class="eco-thread-hd" onclick="toggleCo('+threadKeyAttr+')" style="cursor:pointer;padding:8px 10px;background:#fafaf7;display:flex;align-items:center;gap:8px;justify-content:space-between;">'
-            +'<div style="display:flex;align-items:center;gap:8px;min-width:0;">'
-              +'<svg class="eco-cv'+(tIsOpen?' open':'')+'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><path d="M4 6l4 4 4-4"/></svg>'
-              +'<div style="min-width:0;">'
-                +'<div style="font-size:12px;font-weight:500;color:#222;">'+subjLine+'</div>'
-                +'<div style="font-size:10px;color:#888;">'+thread.length+' message'+(thread.length===1?'':'s')+' · '+esc(dateRange)+'</div>'
-              +'</div>'
-            +'</div>'
-          +'</div>'
-          +msgsHtml
-          +'</div>';
-        return tHeader;
-      }).join(''):'';
-      const coAttr=JSON.stringify(co).replace(/"/g,'&quot;');
-      return '<div class="eco">'
-        +'<div class="eco-hd">'
-          +'<div class="eco-expand" onclick="toggleCo('+coAttr+')">'
-            +'<svg class="eco-cv'+(isOpen?' open':'')+'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>'
-            +'<div><div class="eco-co">'+esc(co)+'</div>'
-            +'<div class="eco-ct">'+ces.length+' email'+(ces.length!==1?'s':'')+' · '+sortedThreads.length+' thread'+(sortedThreads.length!==1?'s':'')+'</div></div>'
-          +'</div>'
-          +'<a href="'+esc(coSearchUrl)+'" target="_blank" class="eco-ol" onclick="event.stopPropagation()">'
-            +'<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg>Open in Outlook</a>'
-        +'</div>'
-        +(isOpen?'<div class="eco-bd" style="padding:6px 10px;">'+threadBlocks+'</div>':'')
-      +'</div>';
-    }).join('');
-    body.innerHTML=`<div class="est">${subtabs}</div>${coBlocks}`;
-
+    /* Phase 8v-2z: redesigned Emails tab.
+       Default = flat chronological list across whole project.
+       Toolbar = search + group + sub-group + copy-search-query.
+       Per-row = compact line, expand chevron for details, flag-for-followup. */
+    body.innerHTML=_renderEmailsTabContent(p);
   } else if(currentTab==='files'){
     const ic={pdf:'f-pdf PDF',xlsx:'f-xls XLS',xls:'f-xls XLS',doc:'f-doc DOC',docx:'f-doc DOC',dwg:'f-dwg DWG'};
     body.innerHTML=p.files.length?p.files.map(f=>{const ext=f.name.split('.').pop().toLowerCase();const[cls,lbl]=(ic[ext]||'f-doc DOC').split(' ');return`<div class="fi"><div class="fic ${cls}">${lbl}</div><div style="flex:1;"><div style="font-size:13px;">${esc(f.name)}</div><div style="font-size:11px;color:#aaa;">${esc(f.size)}</div></div><button class="iob" title="Open in SharePoint" onclick="alert('Opens file from SharePoint.')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button></div>`;}).join(''):'<div style="color:#aaa;font-size:13px;">No files linked yet.</div>';
@@ -4338,22 +4312,268 @@ function addTimelineItem(){
 
 function setEmailRole(role){currentEmailRole=role;expanded={};renderTab();}
 function toggleCo(co){expanded[co]=expanded[co]!==true;renderTab();}
+/* ===== Phase 8v-2z: Emails tab v2 ===== */
+let emailTabState={search:'',group:'none',subGroup:'none',expandedRows:new Set(),expandedGroups:new Set()};
+function _emailTabInit(){
+  /* Reset transient view state on project switch — set by openProject. */
+  emailTabState={search:'',group:'none',subGroup:'none',expandedRows:new Set(),expandedGroups:new Set()};
+}
+function setEmailGroup(g){
+  emailTabState.group=g||'none';
+  /* If sub-group equals new group, reset sub-group to none. */
+  if(emailTabState.subGroup===emailTabState.group)emailTabState.subGroup='none';
+  emailTabState.expandedGroups.clear();
+  renderTab();
+}
+function setEmailSubGroup(sg){
+  emailTabState.subGroup=sg||'none';
+  emailTabState.expandedGroups.clear();
+  renderTab();
+}
+function setEmailSearch(s){
+  emailTabState.search=String(s||'').toLowerCase();
+  renderTab();
+}
+function toggleEmailRow(emailId){
+  if(!emailId)return;
+  if(emailTabState.expandedRows.has(emailId))emailTabState.expandedRows.delete(emailId);
+  else emailTabState.expandedRows.add(emailId);
+  renderTab();
+}
+function toggleEmailGroup(key){
+  if(!key)return;
+  if(emailTabState.expandedGroups.has(key))emailTabState.expandedGroups.delete(key);
+  else emailTabState.expandedGroups.add(key);
+  renderTab();
+}
+function _emailGroupKey(email,kind){
+  if(kind==='company')return email.company||'(no company)';
+  if(kind==='sender')return (email.from||email.fromEmail||'(unknown)');
+  if(kind==='subject')return _normaliseEmailSubject(email.subject||'')||'(no subject)';
+  if(kind==='role'){
+    const r=email.role;
+    if(r==='architect')return 'Architect';
+    if(r==='mc')return 'Main contractor';
+    if(r==='sub')return 'Sub-contractors';
+    return 'Unassigned';
+  }
+  return '';
+}
+function _findReminderForEmail(p,emailId){
+  if(!p||!Array.isArray(p.reminders))return null;
+  return p.reminders.find(function(r){return r.emailId===emailId;})||null;
+}
+function _renderEmailRow(p,e,indent){
+  const author=e.isOutbound?'Richard (you)':esc(e.from||e.fromEmail||'?');
+  const subj=esc(e.subject||'(no subject)');
+  const dateLbl=esc(fmtDate(e.date)||e.date||'');
+  const co=e.company?'<span style="color:#777;font-size:11px;"> · '+esc(e.company)+'</span>':'';
+  const olUrl=e.webLink||(e.id?'https://outlook.office.com/owa/?ItemID='+encodeURIComponent(e.id)+'&exvsurl=1&viewmodel=ReadMessageItem':'');
+  const olLink=olUrl?'<a href="'+esc(olUrl)+'" target="_blank" style="font-size:11px;color:#0c447c;text-decoration:none;flex-shrink:0;" title="Open this email in Outlook" onclick="event.stopPropagation()">Open ↗</a>':'';
+  const idAttr=JSON.stringify(e.id||'').replace(/"/g,'&quot;');
+  const expanded=emailTabState.expandedRows.has(e.id);
+  const rem=_findReminderForEmail(p,e.id);
+  const flagFilled=!!rem;
+  const flagBtn='<button onclick="event.stopPropagation();_emailFlagFollowUp('+idAttr+')" title="'+(flagFilled?'Already flagged · click to unflag':'Flag for follow-up — creates a CRM reminder + Outlook calendar event')+'" style="border:0;background:none;cursor:pointer;padding:2px 4px;font-size:14px;color:'+(flagFilled?'#a87000':'#bbb')+';flex-shrink:0;">'+(flagFilled?'⚑':'⚐')+'</button>';
+  const expandBtn='<button onclick="event.stopPropagation();toggleEmailRow('+idAttr+')" title="Show/hide details" style="border:0;background:none;cursor:pointer;padding:2px 4px;color:#888;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transform:rotate('+(expanded?'180':'0')+'deg);transition:transform 0.15s;"><path d="M4 6l4 4 4-4"/></svg></button>';
+  const rowBg=e.isOutbound?'#f7faff':'#fff';
+  const compactRow=
+    '<div style="padding:6px 10px;display:flex;gap:8px;align-items:center;background:'+rowBg+';">'
+    +'<div style="font-size:10px;color:#999;min-width:60px;flex-shrink:0;">'+dateLbl+'</div>'
+    +'<div style="min-width:0;flex:1;font-size:12px;color:#222;">'
+      +'<span style="font-weight:500;">'+author+'</span>'
+      +(e.isOutbound?' <span style="color:#0c447c;font-size:9px;">↗</span>':'')
+      +co
+      +' · <span style="color:#555;">'+subj+'</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+flagBtn+expandBtn+olLink+'</div>'
+    +'</div>';
+  let detailsRow='';
+  if(expanded){
+    const toLine=(e.to&&e.to.length)?'<div><strong>To:</strong> '+esc((e.to||[]).join(', '))+'</div>':'';
+    const ccLine=(e.cc&&e.cc.length)?'<div><strong>Cc:</strong> '+esc((e.cc||[]).join(', '))+'</div>':'';
+    const fromLine='<div><strong>From:</strong> '+esc(e.fromEmail||e.from||'?')+'</div>';
+    const preview=e.points&&e.points[0]?esc(String(e.points[0]).substring(0,400)):'(no preview)';
+    const cats=e.categories&&e.categories.length?'<div><strong>Outlook tags:</strong> '+esc((e.categories||[]).join(' · '))+'</div>':'';
+    const conv=e.conversationId?'<div><strong>Thread:</strong> '+esc(e.conversationId.substring(0,40))+(e.conversationId.length>40?'…':'')+'</div>':'';
+    const att=e.hasAttachments?'<div><strong>Attachments:</strong> yes (open in Outlook to download)</div>':'';
+    const reminderLine=rem?'<div style="color:#a87000;"><strong>⚑ Follow-up reminder set:</strong> '+esc(fmtDate(rem.date)||rem.date)+(rem.notes?' — '+esc(rem.notes):'')+'</div>':'';
+    detailsRow=
+      '<div style="padding:8px 10px 10px 70px;background:'+(e.isOutbound?'#f0f6ff':'#fafaf7')+';border-top:1px solid #f0f0eb;font-size:11px;color:#555;line-height:1.55;">'
+      +fromLine+toLine+ccLine
+      +'<div style="margin-top:6px;padding-top:6px;border-top:1px solid #ebebe6;color:#666;"><strong>Preview:</strong> '+preview+'</div>'
+      +(cats||conv||att||reminderLine?'<div style="margin-top:6px;padding-top:6px;border-top:1px solid #ebebe6;color:#777;font-size:10px;">'+cats+conv+att+reminderLine+'</div>':'')
+      +'</div>';
+  }
+  return '<div data-email-id="'+esc(e.id||'')+'" style="border-bottom:1px solid #f5f5f3;'+(indent?'margin-left:'+(indent*16)+'px;':'')+'">'+compactRow+detailsRow+'</div>';
+}
+function _renderEmailGroupBlock(p,key,emails,level){
+  const expanded=emailTabState.expandedGroups.has(key);
+  const keyAttr=JSON.stringify(key).replace(/"/g,'&quot;');
+  const indentPx=level*12;
+  const header=
+    '<div onclick="toggleEmailGroup('+keyAttr+')" style="cursor:pointer;padding:8px 10px;background:#fafaf7;border:1px solid #ebebe6;border-radius:6px;margin:'+(level===0?'8px':'4px')+' 0 '+(level===0?'4px':'2px')+' '+indentPx+'px;display:flex;align-items:center;gap:8px;">'
+    +'<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transform:rotate('+(expanded?'180':'0')+'deg);transition:transform 0.15s;flex-shrink:0;"><path d="M4 6l4 4 4-4"/></svg>'
+    +'<div style="font-size:13px;font-weight:500;color:#222;flex:1;">'+esc(key)+' <span style="color:#888;font-weight:400;">('+emails.length+' email'+(emails.length===1?'':'s')+')</span></div>'
+    +'</div>';
+  let body='';
+  if(expanded){
+    /* Apply sub-grouping if level=0 and a sub-group is selected. */
+    if(level===0&&emailTabState.subGroup&&emailTabState.subGroup!=='none'){
+      const sub=emailTabState.subGroup;
+      const subBuckets=new Map();
+      emails.forEach(function(e){
+        const k=_emailGroupKey(e,sub);
+        if(!subBuckets.has(k))subBuckets.set(k,[]);
+        subBuckets.get(k).push(e);
+      });
+      const sortedSub=[...subBuckets.entries()].sort(function(a,b){return a[0].localeCompare(b[0]);});
+      body=sortedSub.map(function(entry){
+        const subKey=key+' › '+entry[0]; /* unique to avoid expanded-state collision */
+        const sortedEmails=entry[1].slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+        return _renderEmailGroupBlock(p,subKey,sortedEmails,1);
+      }).join('');
+    }else{
+      const sorted=emails.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+      body='<div style="margin-left:'+(indentPx+12)+'px;border:1px solid #ebebe6;border-radius:4px;background:#fff;margin-bottom:6px;overflow:hidden;">'
+        +sorted.map(function(e){return _renderEmailRow(p,e,0);}).join('')
+        +'</div>';
+    }
+  }
+  return header+body;
+}
+function _renderEmailsTabContent(p){
+  if(!p.emails||!p.emails.length){
+    return '<div style="color:#aaa;font-size:13px;">No emails logged yet.</div>';
+  }
+  const search=emailTabState.search||'';
+  /* Filter by search across subject, from, fromEmail, body preview. */
+  const filtered=p.emails.filter(function(e){
+    if(!search)return true;
+    const hay=((e.subject||'')+' '+(e.from||'')+' '+(e.fromEmail||'')+' '+((e.points&&e.points[0])||'')+' '+(e.company||'')).toLowerCase();
+    return hay.indexOf(search)>=0;
+  });
+  /* Build toolbar */
+  const groupOptions=[
+    ['none','None (chronological)'],
+    ['role','Role'],
+    ['company','Company'],
+    ['sender','Sender'],
+    ['subject','Subject (thread)']
+  ];
+  const subOptions=[
+    ['none','— None —'],
+    ['company','Company'],
+    ['sender','Sender'],
+    ['subject','Subject (thread)']
+  ].filter(function(o){return o[0]!==emailTabState.group;});
+  const groupSel='<select onchange="setEmailGroup(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;">'
+    +groupOptions.map(function(o){return '<option value="'+o[0]+'"'+(emailTabState.group===o[0]?' selected':'')+'>'+esc(o[1])+'</option>';}).join('')
+    +'</select>';
+  const subEnabled=emailTabState.group!=='none';
+  const subSel='<select onchange="setEmailSubGroup(this.value)" '+(subEnabled?'':'disabled')+' style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:'+(subEnabled?'#fff':'#f5f5f3')+';color:'+(subEnabled?'#222':'#999')+';">'
+    +subOptions.map(function(o){return '<option value="'+o[0]+'"'+(emailTabState.subGroup===o[0]?' selected':'')+'>'+esc(o[1])+'</option>';}).join('')
+    +'</select>';
+  /* Search query the user can copy-paste into Outlook's search bar — uses
+     the project's category if available (most reliable filter), otherwise
+     project name + domain hints. */
+  const copyQ=p.outlookCategory
+    ?'category:"'+p.outlookCategory+'"'
+    :(p.name?'"'+p.name+'"':'');
+  const copyBtn='<button onclick="_copyToClipboard('+JSON.stringify(copyQ).replace(/"/g,'&quot;')+');this.textContent=\'✓ copied\';setTimeout(function(b){return function(){b.innerHTML=\'<svg width=\\\'11\\\' height=\\\'11\\\' viewBox=\\\'0 0 16 16\\\' fill=\\\'none\\\' stroke=\\\'currentColor\\\' stroke-width=\\\'1.5\\\'><rect x=\\\'4\\\' y=\\\'4\\\' width=\\\'9\\\' height=\\\'9\\\' rx=\\\'1\\\'/><path d=\\\'M2 11V3a1 1 0 011-1h8\\\'/></svg>Copy Outlook search\';};}(this),1500);" style="font-size:11px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;cursor:pointer;color:#0c447c;display:inline-flex;align-items:center;gap:4px;" title="Copy '+esc(copyQ)+' — paste into Outlook&apos;s search bar"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 011-1h8"/></svg>Copy Outlook search</button>';
+  const toolbar=
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 10px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;margin-bottom:12px;">'
+    +'<input type="text" placeholder="Search subject, sender, body…" value="'+esc(search)+'" oninput="setEmailSearch(this.value)" style="flex:1;min-width:180px;font-size:12px;padding:5px 10px;border:1px solid #d3dce6;border-radius:4px;"/>'
+    +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Group by: '+groupSel+'</label>'
+    +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Sub-group: '+subSel+'</label>'
+    +copyBtn
+    +'</div>';
+  const counter=search?'<div style="font-size:11px;color:#888;margin-bottom:6px;">'+filtered.length+' of '+p.emails.length+' emails match "'+esc(search)+'"</div>':'';
+  /* Render body based on group selection. */
+  let listHtml='';
+  if(emailTabState.group==='none'){
+    if(!filtered.length){
+      listHtml='<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No emails match the search.</div>';
+    }else{
+      const sorted=filtered.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+      listHtml='<div style="border:1px solid #ebebe6;border-radius:6px;background:#fff;overflow:hidden;">'
+        +sorted.map(function(e){return _renderEmailRow(p,e,0);}).join('')
+        +'</div>';
+    }
+  }else{
+    const buckets=new Map();
+    filtered.forEach(function(e){
+      const k=_emailGroupKey(e,emailTabState.group);
+      if(!buckets.has(k))buckets.set(k,[]);
+      buckets.get(k).push(e);
+    });
+    const sortedKeys=[...buckets.keys()].sort();
+    if(!sortedKeys.length){
+      listHtml='<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No emails match the search.</div>';
+    }else{
+      listHtml=sortedKeys.map(function(k){return _renderEmailGroupBlock(p,k,buckets.get(k),0);}).join('');
+    }
+  }
+  return toolbar+counter+listHtml;
+}
+function _copyToClipboard(text){
+  if(!text)return;
+  if(navigator&&navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).catch(function(e){try{console.warn('Clipboard write failed',e);}catch(_){}});
+    return;
+  }
+  /* Legacy fallback */
+  try{
+    const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+  }catch(e){try{console.warn('Clipboard fallback failed',e);}catch(_){}}
+}
+/* ===== Phase 8v-2z: flag-for-followup ===== */
+function _emailFlagFollowUp(emailId){
+  if(!currentProject)return;
+  const email=(currentProject.emails||[]).find(function(e){return e.id===emailId;});
+  if(!email)return;
+  const existing=_findReminderForEmail(currentProject,emailId);
+  if(existing){
+    /* Already flagged — confirm to unflag (and cancel calendar event). */
+    if(!confirm('Unflag this email and cancel the linked Outlook calendar event?\n\nReminder: "'+(existing.text||'')+'"\nDue: '+(existing.date||'')))return;
+    /* Remove reminder + matching timeline entry. */
+    currentProject.reminders=(currentProject.reminders||[]).filter(function(r){return r.id!==existing.id;});
+    currentProject.timeline=(currentProject.timeline||[]).filter(function(t){return t.remId!==existing.id;});
+    persistProjects();
+    /* Cancel calendar event in Outlook (best effort). */
+    if(existing.calendarEventId)_deleteOutlookEvent(existing.calendarEventId);
+    renderTab();
+    return;
+  }
+  /* Not flagged yet — open reminder modal pre-filled with tomorrow + email subject + push intent. */
+  const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
+  const dueDateIso=tomorrow.toISOString().slice(0,10);
+  pendingReminderCompany=email.company||null;
+  pendingReminderEmailId=emailId;
+  pendingReminderPushToCalendar=true;
+  showReminderModal(null,'Follow up: '+(email.subject||'(no subject)'),email.company||null);
+  /* Pre-set the date to tomorrow (showReminderModal cleared it). */
+  setTimeout(function(){
+    const dEl=document.getElementById('rem-date');
+    if(dEl)dEl.value=dueDateIso;
+  },20);
+}
 /* Phase 8v-2u: jump from a timeline email entry to the Emails tab,
    pre-expanding the relevant company and thread containing that email. */
 function _jumpToEmail(emailId){
   if(!currentProject||!emailId)return;
   const email=(currentProject.emails||[]).find(e=>e.id===emailId);
   if(!email)return;
-  const role=email.role||'unassigned';
-  const co=email.company||'(no company)';
-  const threadKey='thread:'+co+':'+(email.conversationId||email.id);
-  /* Switch to the Emails tab, set the right sub-tab, expand the company
-     and thread that contain this email. */
+  /* Phase 8v-2z: switch to Emails tab, ensure flat-chronological view (so
+     no group expand needed), expand the target row to show details, scroll
+     into view. */
   currentTab='emails';
-  currentEmailRole=role;
-  expanded={};
-  expanded[co]=true;
-  expanded[threadKey]=true;
+  emailTabState.search='';
+  emailTabState.group='none';
+  emailTabState.subGroup='none';
+  emailTabState.expandedGroups.clear();
+  emailTabState.expandedRows.add(emailId);
   /* Update the active tab indicator on the project header tab buttons. */
   const tabs=document.querySelectorAll('.ptab');
   tabs.forEach(function(t,i){t.classList.toggle('active',['overview','timeline','contacts','emails','files'][i]==='emails');});
@@ -4599,6 +4819,10 @@ function toggleReminderDone(rid){
 /* Phase 8v-2x: pendingReminderCompany carries the company allocation
    from the timeline note input through the reminder modal to saveReminder. */
 let pendingReminderCompany=null;
+/* Phase 8v-2z: when a reminder is created via the email flag, carry the email
+   reference and "push to Outlook calendar" intent through the modal. */
+let pendingReminderEmailId=null;
+let pendingReminderPushToCalendar=false;
 function showReminderModal(rid,prefillText,prefillCompany){
   editingRemId=rid; remModalDone=false;
   pendingReminderCompany=prefillCompany||null;
@@ -4642,15 +4866,41 @@ function saveReminder(){
   } else {
     const newId=uid();
     /* Phase 8v-2x: persist the optional company allocation onto both the
-       reminder record and its mirror timeline entry. */
+       reminder record and its mirror timeline entry.
+       Phase 8v-2z: persist optional email association + calendar event id. */
     const remRec={id:newId,text:text||'Follow up',date,soon:date&&date<=today(),done:remModalDone,notes};
     if(pendingReminderCompany)remRec.company=pendingReminderCompany;
+    if(pendingReminderEmailId)remRec.emailId=pendingReminderEmailId;
     currentProject.reminders.push(remRec);
     const tlEntry={id:uid(),type:'reminder',date:date||today(),author:ME,action:'set a reminder',remText:text||'Follow up',remNotes:notes,done:remModalDone,remId:newId};
     if(pendingReminderCompany)tlEntry.company=pendingReminderCompany;
     currentProject.timeline.unshift(tlEntry);
+    /* Phase 8v-2z: if this reminder originated from the email follow-up flag,
+       push to Outlook calendar via Graph. Async; failure surfaces via alert. */
+    if(pendingReminderPushToCalendar&&pendingReminderEmailId){
+      const email=(currentProject.emails||[]).find(function(e){return e.id===pendingReminderEmailId;});
+      if(email){
+        /* Compute due ISO at the email-flag click time of day, on the chosen date.
+           If user changed the date, use that; if they kept tomorrow, use tomorrow same time. */
+        const now=new Date();
+        const due=new Date(date+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
+        const dueIso=due.toISOString();
+        const proj=currentProject;
+        _createOutlookFollowUpEvent(proj,email,dueIso,{note:notes||''}).then(function(evt){
+          /* Save the Graph event id on the reminder for later cancel. */
+          const r=proj.reminders.find(function(x){return x.id===newId;});
+          if(r){r.calendarEventId=evt.id;r.calendarEventWebLink=evt.webLink||'';try{persistProjects();}catch(e){}}
+          try{console.log('[Phase 8v-2z] Calendar event created:',evt.id);}catch(_){}
+        }).catch(function(err){
+          try{console.warn('[Phase 8v-2z] Calendar push failed',err);}catch(_){}
+          alert('Reminder saved in CRM, but Outlook calendar push failed:\n\n'+(err.message||err)+'\n\nThe CRM reminder is intact. Check the Calendars.ReadWrite permission in Azure.');
+        });
+      }
+    }
   }
   pendingReminderCompany=null;
+  pendingReminderEmailId=null;
+  pendingReminderPushToCalendar=false;
   persistProjects();
   hideReminderModal();
   renderTab();
@@ -5533,7 +5783,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07u · outlook-categories'
+      build:'2026-05-07v · emails-redesign+follow-up'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -5698,7 +5948,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07u · outlook-categories';
+const BACKUP_BUILD='2026-05-07v · emails-redesign+follow-up';
 function exportBackup(){
   const payload={
     _meta:{
@@ -7275,7 +7525,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07u · outlook-categories','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07v · emails-redesign+follow-up','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
