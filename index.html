@@ -131,9 +131,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .fpill{padding:5px 13px;font-size:12px;border:1px solid #e0e0db;border-radius:20px;cursor:pointer;color:#666;background:#fff;transition:all 0.15s;font-family:inherit;}
 .fpill:hover{border-color:#bbb;color:#1a1a18;}
 .fpill.active{background:#185fa5;color:#fff;border-color:#185fa5;}
-.col-hdr{display:grid;grid-template-columns:2.4fr 1.3fr 1.3fr 1fr 1fr 32px;gap:12px;padding:6px 16px;margin-bottom:4px;}
+.col-hdr{display:grid;grid-template-columns:2.4fr 1.3fr 0.7fr 0.9fr 1fr 0.9fr 0.9fr 32px;gap:12px;padding:6px 16px;margin-bottom:4px;}
 .ch{font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.07em;font-weight:500;}
-.pc{display:grid;grid-template-columns:2.4fr 1.3fr 1.3fr 0.9fr 0.9fr 1fr 32px;align-items:center;gap:12px;background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:13px 16px;cursor:pointer;margin-bottom:8px;transition:all 0.15s;}
+.pc{display:grid;grid-template-columns:2.4fr 1.3fr 0.7fr 0.9fr 1fr 0.9fr 0.9fr 32px;align-items:center;gap:12px;background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:13px 16px;cursor:pointer;margin-bottom:8px;transition:all 0.15s;}
 .pc:hover{border-color:#b5d4f4;background:#fafcff;}
 .pc.sel{border-color:#378add;}
 .pc.flagged{border-left:3px solid #ef9f27;}
@@ -672,9 +672,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ns" style="margin-top:8px;">Completed</div>
     <div class="ni" onclick="setNav(this,'won')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l3.5 3.5L13 5"/></svg>Won</div>
     <div class="ni" onclick="setNav(this,'lost')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8"/></svg>Lost</div>
-    <div class="ns" style="margin-top:8px;">Alerts</div>
-    <div class="ni" onclick="setNav(this,'chase')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 10.5v.5"/></svg>To chase<span class="nb" id="sb-empty-badge">0</span></div>
-    <div class="ni" onclick="setNav(this,'followup')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2a5 5 0 100 10A5 5 0 008 2zM8 12v2M5 14h6"/></svg>Follow-up due<span class="nb-warn" id="sb-rem-badge">0</span></div>
+    <!-- Phase 8v-3l: "To chase" and "Follow-up due" sidebar entries removed —
+         the dashboard stat cards already give one-click access to these views,
+         so a sidebar copy was redundant. The badge IDs are kept in detached
+         spans so updateSidebarBadges() can still write to them without errors;
+         the spans are display:none and never visible. -->
+    <span id="sb-empty-badge" style="display:none;">0</span>
+    <span id="sb-rem-badge" style="display:none;">0</span>
     <div class="ns" style="margin-top:8px;">Reports</div>
     <div class="ni" onclick="setNav(this,'reports')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="2" width="10" height="12" rx="1"/><path d="M6 5h4M6 8h4M6 11h2"/></svg>Reports</div>
     <div class="ns" style="margin-top:8px;">Tools</div>
@@ -686,7 +690,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08g · stat-cards-to-action-snooze</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08h · project-list-cols-snooze-time</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -756,7 +760,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <button class="fpill" onclick="setFilter('quoting',this)">Quoting only</button>
         </div>
       </div>
-      <div class="col-hdr"><div class="ch">Project</div><div class="ch">Architect</div><div class="ch">Main contractor</div><div class="ch">Stage</div><div class="ch">Sales rep</div><div></div></div>
+      <div class="col-hdr"><div class="ch">Project</div><div class="ch">Architect</div><div class="ch">Companies</div><div class="ch">Stage</div><div class="ch">Sales rep</div><div class="ch">Follow-up</div><div class="ch">Last updated</div><div></div></div>
       <div id="projects-list"></div>
     </div>
   </div>
@@ -4081,12 +4085,12 @@ async function toActionSnooze(projectId,reminderId){
       .catch(function(err){try{console.warn('[Phase 8v-3k] Calendar mark-original-done failed',err);}catch(_){}});
   }
   /* Create a new calendar event for the snoozed reminder using the same
-     project-reminder helper used by setProjectReminder. The "due time"
-     defaults to current time on the snooze date — same convention as the
-     existing reminder push. */
+     project-reminder helper used by setProjectReminder. Phase 8v-3l: the
+     "due time" is fixed at 10:00 local on the snooze date — Richard runs
+     his daily review at 09:00, so 10:00 keeps the reminder visible without
+     clashing. */
   try{
-    const now=new Date();
-    const due=new Date(newDate+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
+    const due=new Date(newDate+'T10:00:00');
     const projUrl=_buildProjectDeepLink(p.id);
     const pseudoEmail={subject:newText,fromEmail:'',from:'',webLink:projUrl};
     _createOutlookFollowUpEvent(p,pseudoEmail,due.toISOString(),{note:stitchedNotes})
@@ -4523,33 +4527,53 @@ function setNav(el,view){
 }
 
 function statCardNav(view,el){
-  /* Phase 8v-3k: card → sidebar mapping. Cards 1-3 (active / chase /
-     followup) align with sidebar entries; card 4 (stale) has no sidebar
-     entry by design — it's a derived view. setNav handles a null el by
-     just not highlighting anything in the sidebar. */
-  const map={active:0,chase:6,followup:7};
+  /* Phase 8v-3l: only Active still has a sidebar entry. Chase / Follow-up /
+     Stale cards now navigate without a sidebar match, so the active
+     highlight stays on whatever sidebar item was previously selected — fine
+     because these are dashboard-stat-card views, not navigation targets. */
+  const map={active:0};
   const navItems=document.querySelectorAll('.sidebar .ni');
   const targetEl=Object.prototype.hasOwnProperty.call(map,view)?navItems[map[view]]:null;
   setNav(targetEl,view);
 }
 
-/* Phase 8v-3g: render the per-project follow-up cell on the dashboard list.
-   When the date has passed, switch to red and surface "X day(s) overdue"
-   so the row jumps out without needing a separate panel. Empty cell when
-   no follow-up date is set. */
+/* Phase 8v-3l: per-project Follow-up cell on the dashboard list. The "Follow-up"
+   inline label was removed — there's now a column header so the cell only
+   needs the value. Overdue dates flip to red with a "X day(s) overdue" subline. */
 function _projectFollowUpCell(p){
   const fu=p.followUp||'';
-  if(!fu)return '<div><div class="pml">Follow-up</div><div class="pm" style="color:#bbb;">—</div></div>';
+  if(!fu)return '<div class="pm" style="color:#bbb;">—</div>';
   const tdy=today();
   const overdue=fu<tdy;
   const dateLabel=fmtDate(fu)||fu;
   if(overdue){
-    /* Day delta — local-date arithmetic, both ends are YYYY-MM-DD strings. */
     const ms=new Date(tdy).getTime()-new Date(fu).getTime();
     const days=Math.max(1,Math.round(ms/(86400*1000)));
-    return '<div><div class="pml" style="color:#a62929;">Follow-up</div><div class="pm" style="color:#a62929;font-weight:600;">'+esc(dateLabel)+'<div style="font-size:10px;font-weight:500;">'+days+' day'+(days===1?'':'s')+' overdue</div></div></div>';
+    return '<div><div class="pm" style="color:#a62929;font-weight:600;">'+esc(dateLabel)+'</div><div style="font-size:10px;font-weight:500;color:#a62929;">'+days+' day'+(days===1?'':'s')+' overdue</div></div>';
   }
-  return '<div><div class="pml">Follow-up</div><div class="pm" style="color:#444;">'+esc(dateLabel)+'</div></div>';
+  return '<div class="pm" style="color:#444;">'+esc(dateLabel)+'</div>';
+}
+/* Phase 8v-3l: Last-updated cell. Just the date; if absent, em-dash. */
+function _projectLastUpdatedCell(p){
+  if(!p.lastUpdated)return '<div class="pm" style="color:#bbb;">—</div>';
+  return '<div class="pm" style="color:#555;">'+esc(fmtDate(p.lastUpdated)||p.lastUpdated)+'</div>';
+}
+/* Phase 8v-3l: count distinct companies on a project. Unions legacy
+   architect / contractor / subs strings with every contact's company,
+   case-insensitively. Useful as an at-a-glance signal of project breadth. */
+function _projectCompanyCount(p){
+  const seen=new Set();
+  const add=function(name){
+    if(!name)return;
+    const k=String(name).trim().toLowerCase();
+    if(!k)return;
+    seen.add(k);
+  };
+  add(p.architect);
+  add(p.contractor);
+  if(Array.isArray(p.subs))p.subs.forEach(add);
+  if(Array.isArray(p.contacts))p.contacts.forEach(function(c){if(c&&c.company)add(c.company);});
+  return seen.size;
 }
 function filterProjects(q){
   const f=getFiltered(q,stageFilter);
@@ -4558,11 +4582,12 @@ function filterProjects(q){
   document.getElementById('projects-list').innerHTML=f.map(p=>`
     <div class="pc${p.flagged?' flagged':''}${currentProject&&currentProject.id===p.id?' sel':''}" onclick="openProject(${p.id})">
       <div><div class="pref">${esc(p.ref)}</div><div class="pname">${esc(p.name)}</div><div class="paddr">${esc(p.addr)}</div></div>
-      <div><div class="pml">Architect</div><div class="pm">${esc(p.architect)}</div></div>
-      <div><div class="pml">Contractor</div><div class="pm">${esc(p.contractor)}</div></div>
+      <div class="pm">${esc(p.architect)||'<span style=&quot;color:#bbb;&quot;>—</span>'}</div>
+      <div class="pm" style="font-weight:600;color:#0c447c;">${_projectCompanyCount(p)}</div>
       <div><span class="sbadge s-${p.stage}">${p.stage[0].toUpperCase()+p.stage.slice(1)}</span></div>
       <div class="pm">${esc(p.salesRep)}</div>
       ${_projectFollowUpCell(p)}
+      ${_projectLastUpdatedCell(p)}
       <div><button class="iob" onclick="event.stopPropagation();openProject(${p.id})"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button></div>
     </div>`).join('')||'<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No projects match this filter.</div>';
   updateSidebarBadges();
@@ -7191,7 +7216,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08g · stat-cards-to-action-snooze'
+      build:'2026-05-08h · project-list-cols-snooze-time'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7356,7 +7381,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08g · stat-cards-to-action-snooze';
+const BACKUP_BUILD='2026-05-08h · project-list-cols-snooze-time';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8938,7 +8963,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08g · stat-cards-to-action-snooze','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08h · project-list-cols-snooze-time','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
