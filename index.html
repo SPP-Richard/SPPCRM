@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07z · files-sync-bytes-fix</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08a · file-rename-filter</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -4175,7 +4175,7 @@ function filterProjects(q){
 
 function openProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; _emailTabInit();
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; currentFilesFilter='all'; _emailTabInit();
   document.getElementById('dashboard-screen').style.display='none';
   document.getElementById('project-screen').classList.add('visible');
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
@@ -4213,7 +4213,7 @@ function filterMiniList(q){renderMiniList(q);}
 
 function switchProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; _emailTabInit();
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; currentFilesFilter='all'; _emailTabInit();
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
   /* Phase 8v-2y: surface the Outlook category in the project header so it's
      visible without scrolling the Overview tab. */
@@ -4577,6 +4577,20 @@ function renderTab(){
    path references. Two action buttons: "Sync from emails" pulls all
    attachments from project emails, "Upload files" picks files from the
    user's computer. */
+/* Phase 8v-3e: derive the company a file "belongs to" for filter buckets.
+   Email-sourced files inherit from their source email so company normalisation
+   in the email model flows through to files. Uploaded files use whatever was
+   set at upload time, defaulting to 'Internal'. The 'Spp' company (our own
+   sent/internal) is treated as Internal so it doesn't pollute the filter. */
+function _fileCompany(file,project){
+  if(!file)return 'Internal';
+  if(file.sourceType==='email'&&file.sourceEmailId){
+    const em=(project&&project.emails||[]).find(function(e){return e.id===file.sourceEmailId;});
+    if(em&&em.company&&em.company!=='Spp')return em.company;
+  }
+  if(file.company&&file.company!=='Spp')return file.company;
+  return 'Internal';
+}
 function _renderFilesTabContent(p){
   if(!p)return '';
   const ic={pdf:'f-pdf PDF',xlsx:'f-xls XLS',xls:'f-xls XLS',doc:'f-doc DOC',docx:'f-doc DOC',dwg:'f-dwg DWG',png:'f-doc IMG',jpg:'f-doc IMG',jpeg:'f-doc IMG',msg:'f-doc MSG',eml:'f-doc EML'};
@@ -4614,27 +4628,86 @@ function _renderFilesTabContent(p){
   if(!p.files||!p.files.length){
     return headerBar+'<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No files linked to this project yet. Click <strong>Sync from emails</strong> to pull email attachments, or <strong>Upload files</strong> to add from your computer.</div>';
   }
-  /* Sort files: newest first */
-  const sorted=p.files.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  /* Phase 8v-3e: filter buttons. Bucket files by their derived company,
+     surface "All" first, then external companies alphabetically, then
+     "Internal" (uploads + 'Spp'/empty). Counts shown next to each. */
+  const buckets={};
+  (p.files||[]).forEach(function(f){
+    const co=_fileCompany(f,p);
+    if(!buckets[co])buckets[co]=0;
+    buckets[co]++;
+  });
+  const externalCos=Object.keys(buckets).filter(function(c){return c!=='Internal';}).sort();
+  const allCos=externalCos.slice();
+  if(buckets['Internal'])allCos.push('Internal');
+  /* Validate currentFilesFilter — fall back to 'all' if the previously
+     selected bucket no longer exists (e.g. last file from that company
+     was removed). */
+  if(typeof currentFilesFilter==='undefined'||currentFilesFilter===null)currentFilesFilter='all';
+  if(currentFilesFilter!=='all'&&allCos.indexOf(currentFilesFilter)<0)currentFilesFilter='all';
+  const filterBtn=function(label,value,count){
+    const active=currentFilesFilter===value;
+    const valAttr=JSON.stringify(value).replace(/"/g,'&quot;');
+    return '<button onclick="setFilesFilter('+valAttr+')" style="font-size:12px;padding:4px 10px;border-radius:14px;border:1px solid '+(active?'#0c447c':'#d3dce6')+';background:'+(active?'#0c447c':'#fff')+';color:'+(active?'#fff':'#333')+';cursor:pointer;font-weight:'+(active?'600':'400')+';">'+esc(label)+(typeof count==='number'?' <span style="opacity:.75;">('+count+')</span>':'')+'</button>';
+  };
+  const totalCount=(p.files||[]).length;
+  const filterRow='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center;">'
+    +'<span style="font-size:11px;color:#777;margin-right:4px;">Filter:</span>'
+    +filterBtn('All','all',totalCount)
+    +externalCos.map(function(co){return filterBtn(co,co,buckets[co]);}).join('')
+    +(buckets['Internal']?filterBtn('Internal','Internal',buckets['Internal']):'')
+    +'</div>';
+  /* Apply the filter, then sort newest first. */
+  const filtered=(p.files||[]).filter(function(f){
+    if(currentFilesFilter==='all')return true;
+    return _fileCompany(f,p)===currentFilesFilter;
+  });
+  const sorted=filtered.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  if(!sorted.length){
+    return headerBar+filterRow+'<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No files match this filter. Click <strong>All</strong> to see everything.</div>';
+  }
   const rows=sorted.map(function(f){
     const ext=(f.name||'').split('.').pop().toLowerCase();
     const cls=(ic[ext]||'f-doc DOC').split(' ');
     const sizeLabel=_fmtSize(f.size);
     const dateLabel=fmtDate(f.date)||f.date||'';
-    const sourceLabel=f.sourceType==='email'?('From email — '+esc(f.addedBy||f.senderEmail||'?')):f.sourceType==='upload'?'Uploaded from computer':'Linked file';
+    const co=_fileCompany(f,p);
+    const sourceLabel=f.sourceType==='email'?('From email — '+esc(f.addedBy||f.senderEmail||'?')):f.sourceType==='upload'?'Uploaded — '+esc(f.addedBy||'You'):'Linked file';
     const idAttr=JSON.stringify(f.id||'').replace(/"/g,'&quot;');
-    return '<div class="fi" style="cursor:pointer;" onclick="_openProjectFile('+idAttr+')">'
+    /* Missing-on-disk: greyed appearance, no Open click, prominent badge. */
+    const missing=!!f.missing;
+    const rowStyle=missing?'opacity:0.55;background:#fbf6e8;':'cursor:pointer;';
+    const onclickAttr=missing?'':' onclick="_openProjectFile('+idAttr+')"';
+    const coBadge=co!=='Internal'?'<span style="display:inline-block;background:#eef4fb;color:#0c447c;border:1px solid #d3dce6;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;">'+esc(co)+'</span>':'<span style="display:inline-block;background:#f4f0e8;color:#7a5a14;border:1px solid #e5dcc4;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;">Internal</span>';
+    const missingBadge=missing?' <span style="display:inline-block;background:#fbeaea;color:#a62929;border:1px solid #e5b9b9;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;">Missing on disk</span>':'';
+    const renameBtn=missing?'':'<button class="iob" title="Rename file (renames on OneDrive too)" onclick="event.stopPropagation();_renameProjectFile('+idAttr+')" style="margin-left:4px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 14h12M3 11l8-8 2 2-8 8H3v-2z"/></svg></button>';
+    const openBtn=missing?'':'<button class="iob" title="Open file" onclick="event.stopPropagation();_openProjectFile('+idAttr+')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button>';
+    const removeTitle=missing?'Remove the missing-file row from the project':'Remove from project (file stays on disk)';
+    return '<div class="fi" style="'+rowStyle+'"'+onclickAttr+'>'
       +'<div class="fic '+cls[0]+'">'+cls[1]+'</div>'
       +'<div style="flex:1;min-width:0;">'
-        +'<div style="font-size:13px;font-weight:500;">'+esc(f.name)+'</div>'
+        +'<div style="font-size:13px;font-weight:500;">'+esc(f.name)+coBadge+missingBadge+'</div>'
         +'<div style="font-size:11px;color:#888;margin-top:2px;">'+esc(sourceLabel)+(dateLabel?' · '+esc(dateLabel):'')+(sizeLabel?' · '+sizeLabel:'')+'</div>'
       +'</div>'
-      +'<button class="iob" title="Open file" onclick="event.stopPropagation();_openProjectFile('+idAttr+')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button>'
-      +'<button class="iob" title="Remove from project (file stays on disk)" onclick="event.stopPropagation();_removeProjectFile('+idAttr+')" style="margin-left:4px;color:#a62929;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V3h4v2M5 5l1 9h4l1-9"/></svg></button>'
+      +openBtn
+      +renameBtn
+      +'<button class="iob" title="'+esc(removeTitle)+'" onclick="event.stopPropagation();_removeProjectFile('+idAttr+')" style="margin-left:4px;color:#a62929;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V3h4v2M5 5l1 9h4l1-9"/></svg></button>'
       +'</div>';
   }).join('');
-  return headerBar+rows;
+  /* Fire reconciliation in the background. If anything changed (a file
+     went missing or returned), re-render. Skipping in test mode keeps
+     existing tests deterministic; tests can still call _reconcileProjectFiles
+     directly to verify behaviour. */
+  if(fsaConnected&&!localStorage.getItem('spp.testMode')){
+    try{setTimeout(function(){_reconcileProjectFiles(p).then(function(changed){if(changed)renderTab();}).catch(function(){});},80);}catch(_){}
+  }
+  return headerBar+filterRow+rows;
 }
+function setFilesFilter(value){
+  currentFilesFilter=value||'all';
+  renderTab();
+}
+let currentFilesFilter='all';
 /* ===== Phase 8v-3b: Files tab actions ===== */
 async function _ensureProjectFilesDir(project){
   if(!dataDirHandle)throw new Error('No data folder connected. Connect one via Admin → Snapshots.');
@@ -4721,7 +4794,10 @@ async function _uploadProjectFiles(){
           size:f.size,
           date:today(),
           sourceType:'upload',
-          addedBy:ME||'You'
+          addedBy:ME||'You',
+          /* Phase 8v-3e: uploads default to Internal so they bucket cleanly
+             under the Internal filter. User can re-classify later if needed. */
+          company:'Internal'
         });
         added++;
       }catch(err){
@@ -4734,6 +4810,108 @@ async function _uploadProjectFiles(){
     if(failed)alert('Uploaded '+added+' file(s). '+failed+' failed — check console for details.');
   };
   input.click();
+}
+/* Phase 8v-3e: rename a file on disk AND in the project record (lockstep).
+   FSA has no native rename, so we read-bytes → write-with-new-name →
+   delete-old. The new write goes through _writeProjectFileBytes so name
+   collisions get a -1, -2 suffix instead of clobbering an existing file
+   on disk. The user-facing `name` is always set to what they typed so the
+   display stays predictable even when the filesystem name was suffixed. */
+async function _renameProjectFile(fileId){
+  if(!currentProject||!fileId)return;
+  const f=(currentProject.files||[]).find(function(x){return x.id===fileId;});
+  if(!f){alert('File not found.');return;}
+  if(f.missing){alert('This file is missing on disk — rename only works for files that exist. Remove it instead, or restore the file in OneDrive.');return;}
+  if(!dataDirHandle){alert('No data folder connected.');return;}
+  const newName=prompt('Rename file to:',f.name);
+  if(newName===null)return;
+  const trimmed=String(newName).trim();
+  if(!trimmed){alert('Name cannot be empty.');return;}
+  if(trimmed===f.name)return;
+  /* Sanitise check — same rules as _writeProjectFileBytes. Block names that
+     reduce to empty after sanitisation. */
+  const safe=trimmed.replace(/[\\/:*?"<>|]/g,'_');
+  if(!safe||safe==='.'||safe==='..'){alert('That name is not valid.');return;}
+  let dir;
+  try{dir=await _ensureProjectFilesDir(currentProject);}
+  catch(e){alert('Could not access files folder: '+(e.message||e));return;}
+  /* Read existing bytes. */
+  let bytes;
+  try{
+    const oldHandle=await dir.getFileHandle(f.fsaName||f.name);
+    const file=await oldHandle.getFile();
+    bytes=new Uint8Array(await file.arrayBuffer());
+  }catch(e){
+    if(e.name==='NotFoundError'){
+      /* File vanished between render and rename. Mark missing and bail. */
+      f.missing=true;persistProjects();renderTab();
+      alert('File no longer exists on disk. Marked as missing.');
+      return;
+    }
+    alert('Could not read file: '+(e.message||e));
+    return;
+  }
+  /* Write under new name (collision-suffix logic kicks in inside _writeProjectFileBytes). */
+  let finalName;
+  try{finalName=await _writeProjectFileBytes(currentProject,trimmed,bytes);}
+  catch(e){alert('Could not write renamed file: '+(e.message||e));return;}
+  /* Delete the old entry only if the new write produced a different name. */
+  const oldFsaName=f.fsaName||f.name;
+  if(finalName!==oldFsaName){
+    try{await dir.removeEntry(oldFsaName);}
+    catch(e){
+      /* Don't fail the rename — the new copy exists, just the cleanup
+         failed. Log and let the next reconcile pick up the orphan. */
+      try{console.warn('[Phase 8v-3e] Could not remove old file after rename:',oldFsaName,e);}catch(_){}
+    }
+  }
+  /* Update the record. Name is what the user typed; fsaName is the actual
+     on-disk name (may differ if a -1 suffix was needed). */
+  f.name=trimmed;
+  f.fsaName=finalName;
+  f.missing=false;
+  persistProjects();
+  renderTab();
+  if(finalName!==trimmed){
+    alert('Renamed — but the file system already had "'+trimmed+'", so it was saved as "'+finalName+'" on disk. The app shows it as "'+trimmed+'".');
+  }
+}
+/* Phase 8v-3e: reconcile project.files[] against what's actually on disk.
+   Marks files as missing when the on-disk name has been deleted/renamed
+   externally. Returns a boolean: did anything change? Caller decides whether
+   to re-render. Cheap to call on every Files-tab render — directory.entries()
+   is a single iteration. */
+async function _reconcileProjectFiles(project){
+  if(!project||!project.files||!project.files.length)return false;
+  if(!dataDirHandle)return false;
+  let dir;
+  try{dir=await _ensureProjectFilesDir(project);}
+  catch(e){return false;}
+  /* Build the set of on-disk file names. JSDOM's fake doesn't expose
+     entries() in some test setups, so wrap defensively. */
+  const onDisk=new Set();
+  try{
+    if(typeof dir.entries==='function'){
+      for await (const entry of dir.entries()){
+        const name=entry[0],handle=entry[1];
+        if(handle&&handle.kind==='file')onDisk.add(name);
+      }
+    }else if(dir._files){
+      /* Test fallback — read the fake's internal map. */
+      Object.keys(dir._files).forEach(function(n){onDisk.add(n);});
+    }
+  }catch(e){return false;}
+  let changed=false;
+  for(const f of project.files){
+    const wasMissing=!!f.missing;
+    const isMissing=!onDisk.has(f.fsaName||f.name);
+    if(wasMissing!==isMissing){
+      f.missing=isMissing;
+      changed=true;
+    }
+  }
+  if(changed)persistProjects();
+  return changed;
 }
 async function _syncProjectAttachmentsFromEmails(){
   if(!currentProject)return;
@@ -6503,7 +6681,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07z · files-sync-bytes-fix'
+      build:'2026-05-08a · file-rename-filter'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6668,7 +6846,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07z · files-sync-bytes-fix';
+const BACKUP_BUILD='2026-05-08a · file-rename-filter';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8245,7 +8423,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07z · files-sync-bytes-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08a · file-rename-filter','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
