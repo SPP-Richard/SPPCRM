@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07w · overview+timeline+quickactions</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07x · calls+meetings+files+body</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -810,7 +810,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <button class="ptab" onclick="switchTab('emails',this)">Emails</button>
           <button class="ptab" onclick="switchTab('files',this)">Files</button>
         </div>
-        <label class="edit-toggle" id="edit-toggle" onclick="toggleEdit()">
+        <!-- Phase 8v-3b: Edit Details toggle removed — no longer gates anything
+             since architect/contractor moved out of the field grid into chip rows.
+             toggleEdit() function preserved in case it's referenced elsewhere. -->
+        <label class="edit-toggle" id="edit-toggle" style="display:none;" onclick="toggleEdit()">
           <div class="ckb" id="edit-cb"></div>
           <span>Edit details</span>
         </label>
@@ -852,7 +855,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="back-btn" onclick="closeCompanyDetail()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>All companies</button>
     <div class="divider"></div>
     <div style="font-size:14px;font-weight:500;" id="co-breadcrumb"></div>
-    <div style="margin-left:auto;display:flex;gap:8px;">
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-sm" onclick="_openCurrentCompanyInNewTab()" title="Open this company page in a new tab" style="font-size:11px;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h6v2H5v6h6V7h2v6H3V3z"/><path d="M9 3h4v4M9 7l4-4"/></svg>Open in new tab</button>
       <div class="sw" style="max-width:260px;">
         <svg class="sic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l2.5 2.5"/></svg>
         <input class="si" type="text" placeholder="Search companies…" oninput="filterCompanyMiniList(this.value)" id="co-mini-search"/>
@@ -2418,6 +2422,14 @@ function mergeCurrentProject(){
   if(projects.length<2){alert('You need at least 2 projects to merge.');return;}
   openProjectPicker({mode:'merge-into',sourceId:currentProject.id});
 }
+/* Phase 8v-3b: open the currently-displayed company in a new browser tab.
+   Uses the ?company=NAME deep-link the load-time handler also accepts. */
+function _openCurrentCompanyInNewTab(){
+  if(!currentCompany)return;
+  const base=window.location.pathname.replace(/\/?index\.html$/,'/').replace(/[^/]*$/,'');
+  const url=window.location.origin+base+'?company='+encodeURIComponent(currentCompany);
+  window.open(url,'_blank');
+}
 /* Phase 8v-3a: Click a chip on the Overview to jump to the company page. */
 function _openCompanyFromChip(companyName){
   if(!companyName)return;
@@ -2778,6 +2790,46 @@ async function _retagProjectEmails(project){
    Returns the created event so callers can store its id (for later cancel).
    tz hard-coded to Europe/London — SPP is UK-based. If we ever onboard
    non-UK users this needs reading from the user's mailbox settings. */
+/* Phase 8v-3b: lazy fetch the full email body via Graph when user expands
+   a row. Caches the result on the email object so a re-expand is instant.
+   Body is HTML; the renderer sanitises it to safe tags for inline display. */
+async function _fetchEmailBody(email,project){
+  if(!email||!email.id)return null;
+  if(email._fullBody)return email._fullBody; /* cache hit */
+  const token=await getAccessToken(['Mail.Read']);
+  if(!token)throw new Error('Not signed in');
+  const url='https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'?$select=body,bodyPreview';
+  const r=await fetch(url,{headers:{'Authorization':'Bearer '+token,'Accept':'application/json'}});
+  if(!r.ok){
+    let detail='';try{const j=await r.json();detail=(j.error&&j.error.message)||'';}catch(_){}
+    throw new Error('Body fetch failed: HTTP '+r.status+(detail?' — '+detail:''));
+  }
+  const data=await r.json();
+  const bodyRec={contentType:(data.body&&data.body.contentType)||'text',content:(data.body&&data.body.content)||(data.bodyPreview||'')};
+  email._fullBody=bodyRec;
+  /* Persist so a refresh doesn't lose the cache. */
+  if(project)try{persistProjects();}catch(e){}
+  return bodyRec;
+}
+/* Sanitise HTML for safe inline rendering. Strips scripts, event handlers,
+   style attributes, and replaces images with placeholder unless data: URI.
+   (Note: comment tag-name escaped to avoid breaking the inline-script HTML
+   parser — must not contain a literal end-tag for "scr"+"ipt".) */
+function _sanitiseEmailHtml(html){
+  if(!html)return '';
+  let s=String(html);
+  /* Remove script blocks and style blocks entirely. */
+  s=s.replace(new RegExp('<script\\b[^>]*>[\\s\\S]*?<\\/script>','gi'),'');
+  s=s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,'');
+  /* Strip on* event handlers and javascript: URLs */
+  s=s.replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi,'');
+  s=s.replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi,'');
+  s=s.replace(/javascript\s*:/gi,'#blocked:');
+  /* External images can leak read-receipt-style tracking — strip src attrs
+     unless data: URIs. */
+  s=s.replace(/<img\b([^>]*?)src\s*=\s*"((?!data:)[^"]*)"([^>]*)>/gi,'<img$1$3 alt="(image)" style="display:inline-block;padding:2px 6px;background:#eee;color:#888;font-size:10px;">');
+  return s;
+}
 /* Phase 8v-3a: build a deep-link URL back to a specific project in the
    CRM, used in calendar event bodies for project-level reminders. */
 function _buildProjectDeepLink(projectId){
@@ -2823,6 +2875,53 @@ async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
   if(!r.ok){
     let detail='';try{const j=await r.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(_){}
     throw new Error('Calendar event creation failed: HTTP '+r.status+(detail?' — '+detail:''));
+  }
+  return await r.json();
+}
+/* Phase 8v-3b: create a Teams meeting via Graph /me/events with
+   isOnlineMeeting:true. The response includes onlineMeeting.joinUrl which
+   is the Teams join link. Event body includes project ref + back-link. */
+async function _createTeamsMeetingForEntry(project,entry){
+  if(!project||!entry)return null;
+  const token=await getAccessToken(['Calendars.ReadWrite']);
+  if(!token)throw new Error('Not signed in or Calendars.ReadWrite not granted');
+  const date=entry.date||today();
+  const time=entry.time||'09:00';
+  const startIso=date+'T'+time+':00';
+  const durMin=entry.duration||60;
+  const startDate=new Date(startIso);
+  const endDate=new Date(startDate.getTime()+durMin*60*1000);
+  const projUrl=_buildProjectDeepLink(project.id);
+  const projRef=project.outlookCategory||project.ref||'';
+  const safe=function(s){return String(s||'').replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';});};
+  const bodyHtml=
+    '<p>Project meeting from SPP CRM.</p>'
+    +'<p><strong>Project:</strong> '+safe(project.name)+(projRef?' ('+safe(projRef)+')':'')+'</p>'
+    +(entry.notes?'<p><strong>Notes:</strong></p><p>'+safe(entry.notes).replace(/\n/g,'<br>')+'</p>':'')
+    +'<p><a href="'+safe(projUrl)+'">Open project in SPP CRM ↗</a></p>';
+  const evt={
+    subject:entry.text||'Project meeting',
+    start:{dateTime:_isoToCalendarLocal(startDate.toISOString()),timeZone:'Europe/London'},
+    end:{dateTime:_isoToCalendarLocal(endDate.toISOString()),timeZone:'Europe/London'},
+    body:{contentType:'HTML',content:bodyHtml},
+    isOnlineMeeting:true,
+    onlineMeetingProvider:'teamsForBusiness',
+    categories:project.outlookCategory?[project.outlookCategory]:[],
+    reminderMinutesBeforeStart:15,
+    isReminderOn:true
+  };
+  /* Add attendees if specified */
+  if(Array.isArray(entry.attendees)&&entry.attendees.length){
+    evt.attendees=entry.attendees.map(function(a){return {emailAddress:{address:a.email,name:a.name||''},type:'required'};});
+  }
+  const r=await fetch('https://graph.microsoft.com/v1.0/me/events',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify(evt)
+  });
+  if(!r.ok){
+    let detail='';try{const j=await r.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(_){}
+    throw new Error('Teams meeting creation failed: HTTP '+r.status+(detail?' — '+detail:''));
   }
   return await r.json();
 }
@@ -3323,25 +3422,30 @@ function _handleProjectDeepLink(){
   try{
     const params=new URLSearchParams(window.location.search||'');
     const projId=params.get('project');
-    if(!projId)return;
-    const id=parseInt(projId,10);
-    if(isNaN(id))return;
+    const companyName=params.get('company');
     /* Wait for projects to be hydrated. Schedule with a small delay to
        allow init scripts (auth check, persistence load) to complete. */
     let attempts=0;
     const tryOpen=function(){
       attempts++;
-      if(typeof projects!=='undefined'&&Array.isArray(projects)&&projects.length){
-        const p=projects.find(function(x){return x.id===id;});
-        if(p&&typeof openProject==='function'){
-          openProject(id);
-          return;
+      if(typeof projects!=='undefined'&&Array.isArray(projects)){
+        if(projId){
+          const id=parseInt(projId,10);
+          if(!isNaN(id)){
+            const p=projects.find(function(x){return x.id===id;});
+            if(p&&typeof openProject==='function'){openProject(id);return;}
+          }
+        }
+        /* Phase 8v-3b: ?company=NAME deep-link opens the company detail
+           screen on load. Used by "Open in new tab" buttons. */
+        if(companyName&&typeof openCompanyDetail==='function'){
+          try{openCompanyDetail(companyName);return;}catch(e){}
         }
       }
       if(attempts<20)setTimeout(tryOpen,150);
     };
-    setTimeout(tryOpen,400);
-  }catch(e){try{console.warn('[Phase 8v-3a] Deep-link handling failed',e);}catch(_){}}
+    if(projId||companyName)setTimeout(tryOpen,400);
+  }catch(e){try{console.warn('[Phase 8v-3a/3b] Deep-link handling failed',e);}catch(_){}}
 }
 try{_handleProjectDeepLink();}catch(e){}
 
@@ -4218,12 +4322,14 @@ function renderTab(){
     const noteCompanyOptions=
       '<option value="">All / no specific company</option>'
       +sortedCompanies.map(co=>'<option value="'+esc(co)+'"'+(currentTimelineCompany===co?' selected':'')+'>'+esc(co)+'</option>').join('');
-    /* Phase 8v-3a: extra date/time inputs surface only for non-note types
-       so the default note flow stays one-click. */
+    /* Phase 8v-3a/3b: extra inputs surface only for non-note types. */
     const showDateTime=currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting';
     const showDuration=currentTlType==='meeting';
+    const showAttendees=currentTlType==='meeting';
+    const showNotes=currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting';
     const nowDate=today();
     const nowTime=(function(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');})();
+    const headerPlaceholder=currentTlType==='call-in'?'Call header / who you spoke to':currentTlType==='call-out'?'Call header / who you called':currentTlType==='meeting'?'Meeting subject / title':currentTlType==='reminder'?'Reminder text':'Add a note…';
     const dtInputsHtml=showDateTime
       ?'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'
         +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Date <input type="date" id="tl-entry-date" value="'+nowDate+'" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;"/></label>'
@@ -4231,12 +4337,39 @@ function renderTab(){
         +(showDuration?'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Duration <input type="number" id="tl-entry-duration" value="60" min="5" step="5" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;width:60px;"/> min</label>':'')
       +'</div>'
       :'';
+    /* Phase 8v-3b: separate Notes textarea for calls/meetings.
+       Header input above is the brief title; this captures the longer
+       notes/discussion content. */
+    const notesInputHtml=showNotes
+      ?'<textarea id="tl-entry-notes" rows="4" placeholder="Detailed notes from the '+(currentTlType==='meeting'?'meeting':'call')+'…" style="width:100%;margin-top:6px;font-size:12px;padding:8px;border:1px solid #d3dce6;border-radius:4px;resize:vertical;font-family:inherit;"></textarea>'
+      :'';
+    /* Phase 8v-3b: meeting attendees — checkbox list of project contacts.
+       Selected contacts get added to the Graph event as attendees. */
+    let attendeesHtml='';
+    if(showAttendees){
+      const projContacts=(p.contacts||[]).filter(c=>c.email);
+      if(projContacts.length){
+        attendeesHtml=
+          '<div style="margin-top:6px;padding:6px 8px;background:#fff;border:1px solid #d3dce6;border-radius:4px;">'
+          +'<div style="font-size:10px;color:#666;font-weight:500;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Invite contacts to Teams meeting</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:8px;">'
+          +projContacts.map(function(c){
+            const v=esc(c.email);
+            return '<label style="font-size:11px;color:#555;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" class="tl-meeting-attendee" data-email="'+v+'" data-name="'+esc(c.name||'')+'"/> '+esc(c.name||c.email)+(c.company?' <span style="color:#888;">('+esc(c.company)+')</span>':'')+'</label>';
+          }).join('')
+          +'</div></div>';
+      }else{
+        attendeesHtml='<div style="margin-top:6px;font-size:11px;color:#888;">No project contacts yet — meeting will be created with no attendees. Add contacts via the Contacts tab.</div>';
+      }
+    }
     const addBar=`
       <div class="timeline-add">
         <div class="tl-avatar">RH</div>
         <div class="tl-input-wrap">
-          <textarea class="tl-input" id="tl-note-input" rows="2" placeholder="Add a note, log a call, set a reminder…"></textarea>
+          <textarea class="tl-input" id="tl-note-input" rows="${showNotes?1:2}" placeholder="${esc(headerPlaceholder)}"></textarea>
           ${dtInputsHtml}
+          ${notesInputHtml}
+          ${attendeesHtml}
           <div class="tl-input-actions" style="flex-wrap:wrap;gap:6px;">
             <div class="tl-type-pills">
               <button class="tl-type${currentTlType==='note'?' active':''}" onclick="setTlType('note',this)">Note</button>
@@ -4286,12 +4419,16 @@ function renderTab(){
         const callCo=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
         const dirLabel=item.subType==='in'?'Inbound':item.subType==='out'?'Outbound':'';
         const timeStr=item.time?' at '+esc(item.time):'';
-        cardHtml=`<div class="tl-note-text">${callCo}<span style="display:inline-block;font-size:10px;background:#e6f0fa;color:#185fa5;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(dirLabel)} call${timeStr}</span>${esc(item.text)}</div>`;
+        const callNotes=item.notes?`<div style="margin-top:6px;font-size:12px;color:#555;line-height:1.5;white-space:pre-wrap;border-left:2px solid #e6f0fa;padding-left:10px;">${esc(item.notes)}</div>`:'';
+        cardHtml=`<div class="tl-note-text">${callCo}<span style="display:inline-block;font-size:10px;background:#e6f0fa;color:#185fa5;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(dirLabel)} call${timeStr}</span>${esc(item.text)}${callNotes}</div>`;
       } else if(item.type==='meeting'){
         const mtCo=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
         const timeStr=item.time?' at '+esc(item.time):'';
         const durStr=item.duration?' · '+item.duration+' min':'';
-        cardHtml=`<div class="tl-note-text">${mtCo}<span style="display:inline-block;font-size:10px;background:#f3e9f7;color:#7a3ea3;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">Meeting${timeStr}${durStr}</span>${esc(item.text)}</div>`;
+        const mtNotes=item.notes?`<div style="margin-top:6px;font-size:12px;color:#555;line-height:1.5;white-space:pre-wrap;border-left:2px solid #f3e9f7;padding-left:10px;">${esc(item.notes)}</div>`:'';
+        const teamsBtn=item.teamsJoinUrl?`<a href="${esc(item.teamsJoinUrl)}" target="_blank" style="display:inline-block;margin-top:6px;font-size:11px;padding:4px 10px;background:#5059c9;color:#fff;text-decoration:none;border-radius:4px;font-weight:500;">Join Teams meeting ↗</a>`:'';
+        const attendeeList=(item.attendees&&item.attendees.length)?`<div style="margin-top:4px;font-size:11px;color:#666;"><strong>Invited:</strong> ${item.attendees.map(a=>esc(a.name||a.email)).join(', ')}</div>`:'';
+        cardHtml=`<div class="tl-note-text">${mtCo}<span style="display:inline-block;font-size:10px;background:#f3e9f7;color:#7a3ea3;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">Meeting${timeStr}${durStr}</span>${esc(item.text)}${mtNotes}${attendeeList}${teamsBtn}</div>`;
       }
       return `<div class="tl-item">
         <div class="tl-icon ${item.type}">${tlIcon(item.type)}</div>
@@ -4420,9 +4557,216 @@ function renderTab(){
        Per-row = compact line, expand chevron for details, flag-for-followup. */
     body.innerHTML=_renderEmailsTabContent(p);
   } else if(currentTab==='files'){
-    const ic={pdf:'f-pdf PDF',xlsx:'f-xls XLS',xls:'f-xls XLS',doc:'f-doc DOC',docx:'f-doc DOC',dwg:'f-dwg DWG'};
-    body.innerHTML=p.files.length?p.files.map(f=>{const ext=f.name.split('.').pop().toLowerCase();const[cls,lbl]=(ic[ext]||'f-doc DOC').split(' ');return`<div class="fi"><div class="fic ${cls}">${lbl}</div><div style="flex:1;"><div style="font-size:13px;">${esc(f.name)}</div><div style="font-size:11px;color:#aaa;">${esc(f.size)}</div></div><button class="iob" title="Open in SharePoint" onclick="alert('Opens file from SharePoint.')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button></div>`;}).join(''):'<div style="color:#aaa;font-size:13px;">No files linked yet.</div>';
+    body.innerHTML=_renderFilesTabContent(p);
   }
+}
+/* Phase 8v-3b: Files tab — list project files (sourced from emails OR
+   uploaded from local computer). Files are stored in the OneDrive-synced
+   data folder (FSA) under files/{ref}/, so the project.files[] just keeps
+   path references. Two action buttons: "Sync from emails" pulls all
+   attachments from project emails, "Upload files" picks files from the
+   user's computer. */
+function _renderFilesTabContent(p){
+  if(!p)return '';
+  const ic={pdf:'f-pdf PDF',xlsx:'f-xls XLS',xls:'f-xls XLS',doc:'f-doc DOC',docx:'f-doc DOC',dwg:'f-dwg DWG',png:'f-doc IMG',jpg:'f-doc IMG',jpeg:'f-doc IMG',msg:'f-doc MSG',eml:'f-doc EML'};
+  const _fmtSize=function(s){
+    if(typeof s!=='number')return esc(s||'');
+    if(s<1024)return s+' B';
+    if(s<1024*1024)return (s/1024).toFixed(1)+' KB';
+    if(s<1024*1024*1024)return (s/1024/1024).toFixed(1)+' MB';
+    return (s/1024/1024/1024).toFixed(2)+' GB';
+  };
+  /* Find emails with attachments to power the Sync button. */
+  const emailsWithAttachments=(p.emails||[]).filter(function(e){return e.hasAttachments;});
+  const fsaConnected=typeof dataDirHandle!=='undefined'&&!!dataDirHandle;
+  const projRefSafe=(p.outlookCategory||p.ref||'project-'+p.id).replace(/[^a-zA-Z0-9._-]/g,'-');
+  const headerBar=
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
+    +'<div style="font-size:12px;color:#555;flex:1;min-width:200px;">'
+      +(fsaConnected
+        ?'Files folder: <code style="font-size:11px;background:#fff;padding:2px 6px;border-radius:3px;color:#0c447c;">files/'+esc(projRefSafe)+'/</code>'
+        :'<strong style="color:#a87000;">⚠ No data folder connected.</strong> Connect a OneDrive-synced folder via Admin → Snapshots before uploading or syncing files.'
+      )
+    +'</div>'
+    +(emailsWithAttachments.length
+      ?'<button class="btn btn-sm" '+(fsaConnected?'':'disabled ')+'onclick="_syncProjectAttachmentsFromEmails()" title="Pull attachments from every email on this project that has them">Sync from emails ('+emailsWithAttachments.length+')</button>'
+      :'<button class="btn btn-sm" disabled title="No emails with attachments on this project">Sync from emails</button>')
+    +'<button class="btn btn-sm" '+(fsaConnected?'':'disabled ')+'onclick="_uploadProjectFiles()" title="Pick files from your computer">Upload files</button>'
+    +'</div>';
+  if(!p.files||!p.files.length){
+    return headerBar+'<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No files linked to this project yet. Click <strong>Sync from emails</strong> to pull email attachments, or <strong>Upload files</strong> to add from your computer.</div>';
+  }
+  /* Sort files: newest first */
+  const sorted=p.files.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  const rows=sorted.map(function(f){
+    const ext=(f.name||'').split('.').pop().toLowerCase();
+    const cls=(ic[ext]||'f-doc DOC').split(' ');
+    const sizeLabel=_fmtSize(f.size);
+    const dateLabel=fmtDate(f.date)||f.date||'';
+    const sourceLabel=f.sourceType==='email'?('From email — '+esc(f.addedBy||f.senderEmail||'?')):f.sourceType==='upload'?'Uploaded from computer':'Linked file';
+    const idAttr=JSON.stringify(f.id||'').replace(/"/g,'&quot;');
+    return '<div class="fi" style="cursor:pointer;" onclick="_openProjectFile('+idAttr+')">'
+      +'<div class="fic '+cls[0]+'">'+cls[1]+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-size:13px;font-weight:500;">'+esc(f.name)+'</div>'
+        +'<div style="font-size:11px;color:#888;margin-top:2px;">'+esc(sourceLabel)+(dateLabel?' · '+esc(dateLabel):'')+(sizeLabel?' · '+sizeLabel:'')+'</div>'
+      +'</div>'
+      +'<button class="iob" title="Open file" onclick="event.stopPropagation();_openProjectFile('+idAttr+')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-3M10 2h4v4M14 2L8 8"/></svg></button>'
+      +'<button class="iob" title="Remove from project (file stays on disk)" onclick="event.stopPropagation();_removeProjectFile('+idAttr+')" style="margin-left:4px;color:#a62929;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V3h4v2M5 5l1 9h4l1-9"/></svg></button>'
+      +'</div>';
+  }).join('');
+  return headerBar+rows;
+}
+/* ===== Phase 8v-3b: Files tab actions ===== */
+async function _ensureProjectFilesDir(project){
+  if(!dataDirHandle)throw new Error('No data folder connected. Connect one via Admin → Snapshots.');
+  const filesDir=await dataDirHandle.getDirectoryHandle('files',{create:true});
+  const projRefSafe=(project.outlookCategory||project.ref||'project-'+project.id).replace(/[^a-zA-Z0-9._-]/g,'-');
+  return await filesDir.getDirectoryHandle(projRefSafe,{create:true});
+}
+async function _writeProjectFileBytes(project,name,bytes){
+  const dir=await _ensureProjectFilesDir(project);
+  /* Sanitise filename — keep alphanumerics, dots, dashes, underscores. */
+  let safeName=String(name||'file').replace(/[\\/:*?"<>|]/g,'_');
+  if(safeName.length>200)safeName=safeName.substring(0,200);
+  /* If a file with this name already exists, suffix -1, -2, etc. */
+  let finalName=safeName;
+  let attempt=1;
+  while(true){
+    try{
+      await dir.getFileHandle(finalName);
+      /* Exists — bump suffix */
+      const dot=safeName.lastIndexOf('.');
+      if(dot>0){finalName=safeName.substring(0,dot)+'-'+attempt+safeName.substring(dot);}
+      else{finalName=safeName+'-'+attempt;}
+      attempt++;
+      if(attempt>50)throw new Error('Too many name collisions');
+    }catch(e){
+      if(e.name==='NotFoundError')break;
+      throw e;
+    }
+  }
+  const fh=await dir.getFileHandle(finalName,{create:true});
+  const w=await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+  return finalName;
+}
+async function _openProjectFile(fileId){
+  if(!currentProject||!fileId)return;
+  const f=(currentProject.files||[]).find(function(x){return x.id===fileId;});
+  if(!f)return;
+  if(!dataDirHandle){alert('No data folder connected. Connect one via Admin → Snapshots to access stored files.');return;}
+  try{
+    const dir=await _ensureProjectFilesDir(currentProject);
+    const fh=await dir.getFileHandle(f.fsaName||f.name);
+    const file=await fh.getFile();
+    const url=URL.createObjectURL(file);
+    const win=window.open(url,'_blank');
+    if(!win)alert('Pop-up blocked — please allow pop-ups to open files.');
+    /* Revoke after a delay to free memory once the new tab has loaded. */
+    setTimeout(function(){try{URL.revokeObjectURL(url);}catch(e){}},60000);
+  }catch(e){
+    alert('Could not open file: '+(e.message||e)+'\n\nIf the file was renamed or deleted in OneDrive, remove it from the project and re-add.');
+  }
+}
+function _removeProjectFile(fileId){
+  if(!currentProject||!fileId)return;
+  if(!confirm('Remove this file from the project?\n\nThe file STAYS on your OneDrive folder — only the project link is removed.'))return;
+  currentProject.files=(currentProject.files||[]).filter(function(f){return f.id!==fileId;});
+  persistProjects();
+  renderTab();
+}
+async function _uploadProjectFiles(){
+  if(!currentProject)return;
+  if(!dataDirHandle){alert('No data folder connected. Connect one via Admin → Snapshots first.');return;}
+  /* Open file picker. */
+  const input=document.createElement('input');
+  input.type='file';
+  input.multiple=true;
+  input.style.display='none';
+  document.body.appendChild(input);
+  input.onchange=async function(){
+    const files=[...(input.files||[])];
+    document.body.removeChild(input);
+    if(!files.length)return;
+    let added=0,failed=0;
+    for(const f of files){
+      try{
+        const buf=await f.arrayBuffer();
+        const finalName=await _writeProjectFileBytes(currentProject,f.name,buf);
+        if(!Array.isArray(currentProject.files))currentProject.files=[];
+        currentProject.files.push({
+          id:'file-'+Date.now()+'-'+Math.floor(Math.random()*1000),
+          name:f.name,
+          fsaName:finalName,
+          size:f.size,
+          date:today(),
+          sourceType:'upload',
+          addedBy:ME||'You'
+        });
+        added++;
+      }catch(err){
+        failed++;
+        try{console.warn('[Phase 8v-3b] Upload failed for',f.name,err);}catch(_){}
+      }
+    }
+    persistProjects();
+    renderTab();
+    if(failed)alert('Uploaded '+added+' file(s). '+failed+' failed — check console for details.');
+  };
+  input.click();
+}
+async function _syncProjectAttachmentsFromEmails(){
+  if(!currentProject)return;
+  if(!dataDirHandle){alert('No data folder connected. Connect one via Admin → Snapshots first.');return;}
+  const emailsWithAttachments=(currentProject.emails||[]).filter(function(e){return e.hasAttachments;});
+  if(!emailsWithAttachments.length){alert('No emails with attachments on this project.');return;}
+  if(!confirm('Sync attachments from '+emailsWithAttachments.length+' email(s)?\n\nThis fetches each attachment from Microsoft Graph and saves it to your data folder. May take a few seconds per email.'))return;
+  let token;
+  try{token=await getAccessToken(['Mail.Read']);}
+  catch(e){alert('Auth failed: '+(e.message||e));return;}
+  if(!token){alert('Not signed in.');return;}
+  let added=0,skipped=0,failed=0;
+  for(const email of emailsWithAttachments){
+    try{
+      const r=await fetch('https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'/attachments?$select=id,name,size,contentType,contentBytes',{headers:{'Authorization':'Bearer '+token}});
+      if(!r.ok){failed++;continue;}
+      const data=await r.json();
+      const atts=data.value||[];
+      for(const att of atts){
+        /* Skip already-synced (match by sourceEmailId + name) */
+        const already=(currentProject.files||[]).some(function(f){return f.sourceEmailId===email.id&&f.name===att.name;});
+        if(already){skipped++;continue;}
+        if(!att.contentBytes){failed++;continue;}
+        /* Decode base64 to bytes */
+        const bin=atob(att.contentBytes);
+        const bytes=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        const finalName=await _writeProjectFileBytes(currentProject,att.name,bytes);
+        if(!Array.isArray(currentProject.files))currentProject.files=[];
+        currentProject.files.push({
+          id:'file-'+Date.now()+'-'+Math.floor(Math.random()*1000),
+          name:att.name,
+          fsaName:finalName,
+          size:att.size||bytes.length,
+          date:(email.date||today()),
+          sourceType:'email',
+          sourceEmailId:email.id,
+          senderEmail:email.fromEmail||'',
+          addedBy:email.from||email.fromEmail||'?',
+          contentType:att.contentType||''
+        });
+        added++;
+      }
+    }catch(err){
+      failed++;
+      try{console.warn('[Phase 8v-3b] Attachment sync failed for email',email.id,err);}catch(_){}
+    }
+  }
+  persistProjects();
+  renderTab();
+  alert('Sync complete.\n\nAdded: '+added+'\nAlready synced (skipped): '+skipped+(failed?'\nFailed: '+failed:''));
 }
 
 let currentTlType='note';
@@ -4461,9 +4805,9 @@ function addTimelineItem(){
     input.value='';
     return;
   }
-  /* Phase 8v-3a: call inbound/outbound and meeting entries. Date/time
+  /* Phase 8v-3a/3b: call inbound/outbound and meeting entries. Date/time
      captured from the inline picker (defaults to now). Meetings also
-     carry a duration in minutes. */
+     carry a duration, attendees, and create Teams meeting via Graph. */
   if(currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting'){
     const dEl=document.getElementById('tl-entry-date');
     const tEl=document.getElementById('tl-entry-time');
@@ -4471,6 +4815,9 @@ function addTimelineItem(){
     const time=tEl&&tEl.value?tEl.value:'';
     const isCall=currentTlType==='call-in'||currentTlType==='call-out';
     const subType=currentTlType==='call-in'?'in':(currentTlType==='call-out'?'out':null);
+    /* Phase 8v-3b: separate Notes textarea for calls/meetings. */
+    const notesEl=document.getElementById('tl-entry-notes');
+    const notes=notesEl&&notesEl.value?notesEl.value.trim():'';
     const entry={
       id:uid(),
       type:isCall?'call':'meeting',
@@ -4478,17 +4825,39 @@ function addTimelineItem(){
       time:time,
       author:ME,
       action:isCall?(currentTlType==='call-in'?'logged inbound call':'logged outbound call'):'logged a meeting',
-      text:text
+      text:text,
+      notes:notes
     };
     if(subType)entry.subType=subType;
     if(currentTlType==='meeting'){
       const durEl=document.getElementById('tl-entry-duration');
       const dur=durEl&&durEl.value?parseInt(durEl.value,10):60;
       if(!isNaN(dur))entry.duration=dur;
+      /* Capture selected attendees from the checkbox list. */
+      const checkedAttendees=[...document.querySelectorAll('.tl-meeting-attendee:checked')];
+      const attendees=checkedAttendees.map(function(cb){return {email:cb.getAttribute('data-email'),name:cb.getAttribute('data-name')||''};});
+      if(attendees.length)entry.attendees=attendees;
     }
     if(allocCompany)entry.company=allocCompany;
     currentProject.timeline.unshift(entry);
     input.value='';
+    if(notesEl)notesEl.value='';
+    /* Phase 8v-3b: for meetings, create Teams meeting via Graph (async). */
+    if(currentTlType==='meeting'){
+      _createTeamsMeetingForEntry(currentProject,entry).then(function(evt){
+        if(evt){
+          /* Save event id + Teams join URL on the timeline entry. */
+          entry.calendarEventId=evt.id;
+          entry.calendarEventWebLink=evt.webLink||'';
+          if(evt.onlineMeeting&&evt.onlineMeeting.joinUrl)entry.teamsJoinUrl=evt.onlineMeeting.joinUrl;
+          try{persistProjects();}catch(e){}
+          try{renderTab();}catch(e){}
+        }
+      }).catch(function(err){
+        try{console.warn('[Phase 8v-3b] Teams meeting creation failed',err);}catch(_){}
+        alert('Meeting saved in CRM, but Teams meeting creation failed:\n\n'+(err.message||err)+'\n\nThe CRM entry is intact. Check Calendars.ReadWrite permission in Azure.');
+      });
+    }
     persistProjects();
     renderTab();
     return;
@@ -4583,22 +4952,43 @@ function _renderEmailRow(p,e,indent){
     +'</div>';
   let detailsRow='';
   if(expanded){
-    const toLine=(e.to&&e.to.length)?'<div><strong>To:</strong> '+esc((e.to||[]).join(', '))+'</div>':'';
-    const ccLine=(e.cc&&e.cc.length)?'<div><strong>Cc:</strong> '+esc((e.cc||[]).join(', '))+'</div>':'';
-    const fromLine='<div><strong>From:</strong> '+esc(e.fromEmail||e.from||'?')+'</div>';
-    /* Phase 8v-3a: longer preview cap — was 400, now 1200 chars (Graph
-       bodyPreview is up to ~250 chars, so this comfortably shows the lot
-       and leaves room if Graph ever returns more). */
-    const previewText=e.points&&e.points[0]?String(e.points[0]).substring(0,1200):'(no preview)';
-    const preview=esc(previewText).replace(/\n/g,'<br>');
+    /* Phase 8v-3b: layout — From/date one line, To/Cc next line, Subject
+       on its own line, then the body. */
+    const fromDateLine='<div><strong>From:</strong> '+esc(e.fromEmail||e.from||'?')+' &nbsp;·&nbsp; <strong>Date:</strong> '+esc(fmtDate(e.date)||e.date||'')+'</div>';
+    const toCcParts=[];
+    if(e.to&&e.to.length)toCcParts.push('<strong>To:</strong> '+esc((e.to||[]).join(', ')));
+    if(e.cc&&e.cc.length)toCcParts.push('<strong>Cc:</strong> '+esc((e.cc||[]).join(', ')));
+    const toCcLine=toCcParts.length?'<div>'+toCcParts.join(' &nbsp;·&nbsp; ')+'</div>':'';
+    const subjLine='<div style="margin-top:4px;"><strong>Subject:</strong> '+esc(e.subject||'(no subject)')+'</div>';
+    /* Body content — show cached fullBody if we have it, else the
+       bodyPreview, plus a Load full button to trigger lazy fetch. */
+    let bodyHtml='';
+    if(e._fullBody&&e._fullBody.content){
+      const ct=(e._fullBody.contentType||'text').toLowerCase();
+      if(ct==='html'){
+        bodyHtml='<div style="margin-top:8px;padding:10px;background:#fff;border:1px solid #ebebe6;border-radius:4px;max-height:600px;overflow:auto;font-size:12px;line-height:1.5;">'+_sanitiseEmailHtml(e._fullBody.content)+'</div>';
+      }else{
+        const t=esc(String(e._fullBody.content)).replace(/\n/g,'<br>');
+        bodyHtml='<div style="margin-top:8px;padding:10px;background:#fff;border:1px solid #ebebe6;border-radius:4px;max-height:600px;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap;">'+t+'</div>';
+      }
+    }else{
+      const previewText=e.points&&e.points[0]?String(e.points[0]).substring(0,1200):'(no preview)';
+      const preview=esc(previewText).replace(/\n/g,'<br>');
+      bodyHtml=
+        '<div style="margin-top:8px;padding:10px;background:#fff;border:1px solid #ebebe6;border-radius:4px;font-size:12px;line-height:1.5;">'
+        +'<div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Preview only</div>'
+        +preview
+        +'<div style="margin-top:8px;"><button onclick="event.stopPropagation();_loadFullEmailBody('+idAttr+',this)" style="font-size:11px;padding:4px 10px;border:1px solid #d3dce6;background:#fff;border-radius:4px;cursor:pointer;color:#0c447c;">Load full email body</button></div>'
+        +'</div>';
+    }
     const cats=e.categories&&e.categories.length?'<div><strong>Outlook tags:</strong> '+esc((e.categories||[]).join(' · '))+'</div>':'';
     const conv=e.conversationId?'<div><strong>Thread:</strong> '+esc(e.conversationId.substring(0,40))+(e.conversationId.length>40?'…':'')+'</div>':'';
     const att=e.hasAttachments?'<div><strong>Attachments:</strong> yes (open in Outlook to download)</div>':'';
     const reminderLine=rem?'<div style="color:#a87000;"><strong>⚑ Follow-up reminder set:</strong> '+esc(fmtDate(rem.date)||rem.date)+(rem.notes?' — '+esc(rem.notes):'')+'</div>':'';
     detailsRow=
       '<div style="padding:10px 12px 12px 42px;background:'+(e.isOutbound?'#f0f6ff':'#fafaf7')+';border-top:1px solid #f0f0eb;font-size:12px;color:#555;line-height:1.6;">'
-      +fromLine+toLine+ccLine
-      +'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #ebebe6;color:#444;"><strong>Preview:</strong><br>'+preview+'</div>'
+      +fromDateLine+toCcLine+subjLine
+      +bodyHtml
       +(cats||conv||att||reminderLine?'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #ebebe6;color:#777;font-size:11px;">'+cats+conv+att+reminderLine+'</div>':'')
       +'</div>';
   }
@@ -4712,6 +5102,21 @@ function _renderEmailsTabContent(p){
     }
   }
   return toolbar+counter+listHtml;
+}
+/* Phase 8v-3b: triggered by the "Load full email body" button in the
+   expanded row. Fetches via Graph, caches on email object, re-renders. */
+async function _loadFullEmailBody(emailId,btn){
+  if(!currentProject||!emailId)return;
+  const email=(currentProject.emails||[]).find(function(e){return e.id===emailId;});
+  if(!email)return;
+  if(btn){btn.disabled=true;btn.textContent='Loading…';}
+  try{
+    await _fetchEmailBody(email,currentProject);
+    renderTab();
+  }catch(e){
+    alert('Failed to load full email body: '+(e.message||e));
+    if(btn){btn.disabled=false;btn.textContent='Load full email body';}
+  }
 }
 function _copyToClipboard(text){
   if(!text)return;
@@ -5999,7 +6404,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07w · overview+timeline+quickactions'
+      build:'2026-05-07x · calls+meetings+files+body'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6164,7 +6569,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07w · overview+timeline+quickactions';
+const BACKUP_BUILD='2026-05-07x · calls+meetings+files+body';
 function exportBackup(){
   const payload={
     _meta:{
@@ -7741,7 +8146,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07w · overview+timeline+quickactions','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07x · calls+meetings+files+body','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
