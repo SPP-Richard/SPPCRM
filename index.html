@@ -140,7 +140,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .pref{font-size:10px;color:#bbb;margin-bottom:2px;letter-spacing:0.04em;}
 .pname{font-size:13px;font-weight:500;}
 .paddr{font-size:12px;color:#777;margin-top:1px;}
-.pml{font-size:10px;color:#bbb;margin-bottom:2px;}
+.pml{font-size:10px;color:#666;margin-bottom:2px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;}
 .pm{font-size:12px;color:#666;}
 .sbadge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:500;}
 .s-spec{background:#faeeda;color:#633806;}
@@ -381,7 +381,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px;}
 .field{background:#fff;border:1px solid #e8e8e4;border-radius:8px;padding:10px 13px;transition:border-color 0.15s;}
 .field:hover.editable{border-color:#b5d4f4;cursor:text;}
-.field-label{font-size:11px;color:#bbb;margin-bottom:3px;font-weight:500;}
+.field-label{font-size:11px;color:#555;margin-bottom:3px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;}
 .field-val{font-size:13px;font-weight:500;}
 .field-input{width:100%;border:none;outline:none;font-size:13px;font-weight:500;font-family:inherit;background:transparent;color:#1a1a18;padding:0;}
 .field-select{width:100%;border:none;outline:none;font-size:13px;font-weight:500;font-family:inherit;background:transparent;color:#1a1a18;padding:0;cursor:pointer;}
@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08c · overview-tasks-reminder-fixes</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08d · overview-2col-darker-labels</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -4555,26 +4555,36 @@ function renderTab(){
         +'</select>'
         +'<input class="field-input" type="text" value="'+esc(p.sppRef||'')+'" placeholder="number" style="flex:1;" onchange="updateField('+p.id+',&quot;sppRef&quot;,this.value)"/>'
       +'</div>';
-    /* Phase 8v-3g: outstanding tasks block. All reminders for this project
-       where !done, sorted by date soonest first; overdue dates flip to red.
-       Click any row to edit the reminder (mark complete, change date, etc.). */
+    /* Phase 8v-3g + 8v-3h: outstanding tasks block. All reminders for this
+       project where !done, sorted by date soonest first; overdue dates flip
+       to red. Click any row to edit. The block now lives in its own bordered
+       box on the right of the overview (Phase 8v-3h), with each task as a
+       lightly-divided line inside the box. */
     const _tdy=today();
     const _outstanding=(p.reminders||[]).filter(r=>!r.done).slice().sort((a,b)=>{
       const da=a.date||'9999-12-31',db=b.date||'9999-12-31';
       return da.localeCompare(db);
     });
     const _outRows=_outstanding.length
-      ?_outstanding.map(r=>{
+      ?_outstanding.map(function(r,i){
         const overdue=r.date&&r.date<_tdy;
         const dateLabel=r.date?(fmtDate(r.date)||r.date):'(no date)';
         const idAttr=JSON.stringify(r.id||'').replace(/"/g,'&quot;');
-        return '<div onclick="showReminderModal('+idAttr+')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border:1px solid #e5e8ec;border-radius:5px;background:#fff;cursor:pointer;margin-bottom:4px;font-size:12px;" title="Click to edit reminder">'
+        const borderTop=i===0?'':'border-top:1px solid #ebeef2;';
+        return '<div onclick="showReminderModal('+idAttr+')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 4px;'+borderTop+'cursor:pointer;font-size:12px;" title="Click to edit reminder" onmouseover="this.style.background=\'#f7faff\'" onmouseout="this.style.background=\'transparent\'">'
           +'<span style="flex:1;min-width:0;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(r.text||'(untitled)')+'</span>'
-          +'<span style="flex-shrink:0;color:'+(overdue?'#a62929':'#666')+';font-weight:'+(overdue?'600':'400')+';">'+esc(dateLabel)+(overdue?' · overdue':'')+'</span>'
+          +'<span style="flex-shrink:0;color:'+(overdue?'#a62929':'#555')+';font-weight:'+(overdue?'600':'500')+';">'+esc(dateLabel)+(overdue?' · overdue':'')+'</span>'
           +'</div>';
       }).join('')
-      :'<div style="color:#aaa;font-size:12px;padding:6px 8px;">No outstanding tasks.</div>';
-    const _outstandingBlock='<div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Outstanding tasks ('+_outstanding.length+')</div><div>'+_outRows+'</div></div>';
+      :'<div style="color:#888;font-size:12px;padding:6px 4px;">No outstanding tasks.</div>';
+    const _outstandingBlock=
+      '<div class="overview-outstanding" style="border:1px solid #d3dce6;border-radius:8px;background:#fff;padding:12px 14px;">'
+      +'<div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:10px;border-bottom:1px solid #ebeef2;padding-bottom:8px;">Outstanding tasks ('+_outstanding.length+')</div>'
+      +'<div>'+_outRows+'</div>'
+      +'</div>';
+    /* Phase 8v-3h: shared label style — darker than the previous #bbb so
+       headings read more clearly against the pale-grey overview background. */
+    const _hdr='font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:8px;';
     body.innerHTML=`${ef}
     <div class="field-grid">
       <div class="field"><div class="field-label">Stage</div>
@@ -4593,18 +4603,24 @@ function renderTab(){
       </div>
       <div class="field"><div class="field-label">Last updated</div><div class="field-val" style="color:#777;font-weight:400;">${p.lastUpdated?fmtDate(p.lastUpdated):'—'}</div></div>
     </div>
-    ${_outstandingBlock}
-    <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Architects</div><div>${archs}</div></div>
-    <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Main contractors</div><div>${mcs}</div></div>
-    <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Sub-contractors</div><div>${subs}</div></div>
-    <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Project type</div>${renderProjectTypeChips(p)}</div>
-    <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Products required</div>${renderProductChips(p)}</div>
-    <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Quick actions</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      <button class="btn btn-sm" onclick="alert('Claude searches the register for possible duplicates of: '+${JSON.stringify(p.name)})">Check for duplicates</button>
-      <button class="btn btn-sm" onclick="setProjectReminder()">Set project reminder</button>
-      <button class="btn btn-sm" onclick="renameCurrentProject()">Rename project</button>
-    </div></div>`;
+    <div class="overview-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:18px;align-items:start;">
+      <div class="overview-left">
+        <div><div style="${_hdr}">Architects</div><div>${archs}</div></div>
+        <div style="margin-top:14px;"><div style="${_hdr}">Main contractors</div><div>${mcs}</div></div>
+        <div style="margin-top:14px;"><div style="${_hdr}">Sub-contractors</div><div>${subs}</div></div>
+        <div style="margin-top:16px;"><div style="${_hdr}">Project type</div>${renderProjectTypeChips(p)}</div>
+        <div style="margin-top:16px;"><div style="${_hdr}">Products required</div>${renderProductChips(p)}</div>
+        <div style="margin-top:16px;"><div style="${_hdr}">Quick actions</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <button class="btn btn-sm" onclick="alert('Claude searches the register for possible duplicates of: '+${JSON.stringify(p.name)})">Check for duplicates</button>
+          <button class="btn btn-sm" onclick="setProjectReminder()">Set project reminder</button>
+          <button class="btn btn-sm" onclick="renameCurrentProject()">Rename project</button>
+        </div></div>
+      </div>
+      <div class="overview-right">
+        ${_outstandingBlock}
+      </div>
+    </div>`;
 
   } else if(currentTab==='contacts'){
     const arrow=`<svg class="cr-arrow" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 4l4 4-4 4"/></svg>`;
@@ -6833,7 +6849,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08c · overview-tasks-reminder-fixes'
+      build:'2026-05-08d · overview-2col-darker-labels'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6998,7 +7014,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08c · overview-tasks-reminder-fixes';
+const BACKUP_BUILD='2026-05-08d · overview-2col-darker-labels';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8575,7 +8591,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-08c · overview-tasks-reminder-fixes','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08d · overview-2col-darker-labels','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
