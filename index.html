@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08a · file-rename-filter</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08b · rename-keeps-extension</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -4817,6 +4817,29 @@ async function _uploadProjectFiles(){
    collisions get a -1, -2 suffix instead of clobbering an existing file
    on disk. The user-facing `name` is always set to what they typed so the
    display stays predictable even when the filesystem name was suffixed. */
+/* Phase 8v-3f: extract the trailing extension from a filename, lower-cased.
+   Returns '' if the name has no '.' or starts with '.' (e.g. .gitignore — we
+   don't treat the leading dot as an extension). */
+function _fileExt(name){
+  const s=String(name||'');
+  const dot=s.lastIndexOf('.');
+  if(dot<=0)return '';
+  return s.substring(dot).toLowerCase();
+}
+/* Phase 8v-3f: enforce that a renamed file keeps the original extension.
+   If the user typed no extension, append the original. If they typed a
+   different extension, swap it for the original. Returns {finalName,
+   adjusted} where adjusted is true when we changed what the user typed. */
+function _preserveFileExtension(originalName,newName){
+  const origExt=_fileExt(originalName);
+  if(!origExt)return {finalName:newName,adjusted:false};
+  const newExt=_fileExt(newName);
+  if(newExt===origExt)return {finalName:newName,adjusted:false};
+  if(!newExt)return {finalName:newName+origExt,adjusted:true};
+  /* Different extension typed — strip it and replace with the original. */
+  const dot=newName.lastIndexOf('.');
+  return {finalName:newName.substring(0,dot)+origExt,adjusted:true};
+}
 async function _renameProjectFile(fileId){
   if(!currentProject||!fileId)return;
   const f=(currentProject.files||[]).find(function(x){return x.id===fileId;});
@@ -4832,6 +4855,20 @@ async function _renameProjectFile(fileId){
      reduce to empty after sanitisation. */
   const safe=trimmed.replace(/[\\/:*?"<>|]/g,'_');
   if(!safe||safe==='.'||safe==='..'){alert('That name is not valid.');return;}
+  /* Phase 8v-3f: lock the extension so you can't accidentally corrupt the
+     file by dropping ".pdf". The user-facing name is the corrected one. */
+  const extResult=_preserveFileExtension(f.name,trimmed);
+  const finalDisplayName=extResult.finalName;
+  const extAdjusted=extResult.adjusted;
+  if(finalDisplayName===f.name){
+    /* If the extension lock turned a rename into a no-op, tell the user —
+       otherwise typing "tender.docx" on a .pdf would silently do nothing
+       and they'd think the rename was broken. */
+    if(extAdjusted){
+      alert('File extension is locked to keep the file readable. The change would only have altered the extension, so nothing was done. The file is still "'+f.name+'".');
+    }
+    return;
+  }
   let dir;
   try{dir=await _ensureProjectFilesDir(currentProject);}
   catch(e){alert('Could not access files folder: '+(e.message||e));return;}
@@ -4853,7 +4890,7 @@ async function _renameProjectFile(fileId){
   }
   /* Write under new name (collision-suffix logic kicks in inside _writeProjectFileBytes). */
   let finalName;
-  try{finalName=await _writeProjectFileBytes(currentProject,trimmed,bytes);}
+  try{finalName=await _writeProjectFileBytes(currentProject,finalDisplayName,bytes);}
   catch(e){alert('Could not write renamed file: '+(e.message||e));return;}
   /* Delete the old entry only if the new write produced a different name. */
   const oldFsaName=f.fsaName||f.name;
@@ -4865,16 +4902,20 @@ async function _renameProjectFile(fileId){
       try{console.warn('[Phase 8v-3e] Could not remove old file after rename:',oldFsaName,e);}catch(_){}
     }
   }
-  /* Update the record. Name is what the user typed; fsaName is the actual
-     on-disk name (may differ if a -1 suffix was needed). */
-  f.name=trimmed;
+  /* Update the record. Name is the corrected (extension-locked) display
+     name; fsaName is the actual on-disk name (may differ if a -1 suffix
+     was needed). */
+  f.name=finalDisplayName;
   f.fsaName=finalName;
   f.missing=false;
   persistProjects();
   renderTab();
-  if(finalName!==trimmed){
-    alert('Renamed — but the file system already had "'+trimmed+'", so it was saved as "'+finalName+'" on disk. The app shows it as "'+trimmed+'".');
-  }
+  /* Surface either or both adjustments. Extension lock is the more
+     surprising one to a user, so call it out explicitly. */
+  const messages=[];
+  if(extAdjusted)messages.push('File extension is locked to keep the file readable. Saved as "'+finalDisplayName+'".');
+  if(finalName!==finalDisplayName)messages.push('A file called "'+finalDisplayName+'" already exists, so it was saved as "'+finalName+'" on disk. The app shows it as "'+finalDisplayName+'".');
+  if(messages.length)alert(messages.join('\n\n'));
 }
 /* Phase 8v-3e: reconcile project.files[] against what's actually on disk.
    Marks files as missing when the on-disk name has been deleted/renamed
@@ -6681,7 +6722,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08a · file-rename-filter'
+      build:'2026-05-08b · rename-keeps-extension'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6846,7 +6887,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08a · file-rename-filter';
+const BACKUP_BUILD='2026-05-08b · rename-keeps-extension';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8423,7 +8464,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-08a · file-rename-filter','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08b · rename-keeps-extension','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
