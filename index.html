@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08e · dashboard-cleanup-daily-scan</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08f · search-broaden-site-address</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -701,7 +701,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="pt" id="dash-title">Active projects</div>
     <div class="sw">
       <svg class="sic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l2.5 2.5"/></svg>
-      <input class="si" id="search-box" type="text" placeholder="Search name, address, architect, contractor, sub-contractor, ref…" oninput="filterProjects(this.value)"/>
+      <input class="si" id="search-box" type="text" placeholder="Search name, ref, address, architect, MC, sub, contact…" oninput="filterProjects(this.value)"/>
     </div>
     <div class="om" id="om-wrap" onclick="toggleOnlyMe()">
       <div class="ckb" id="om-cb"></div>
@@ -3830,10 +3830,28 @@ projects.forEach(p=>{
   });
 })();
 
+/* Phase 8v-3j: shared list of searchable fields for a project. Used by both
+   the dashboard top search and the project-switcher mini-list so a query
+   that hits e.g. an architect contact's name works in both places.
+   Returns an array of strings (skipping empty/null) — caller .toLowerCase()'s
+   the query and uses .includes(). Covers project metadata + every contact
+   name and company (so "James Webb" and "Foster & Partners" both match
+   regardless of which legacy text field they're stored on). */
+function _projectSearchFields(p){
+  const out=[p.name,p.addr,p.architect,p.contractor,p.ref,p.sppRef,p.outlookCategory,...(p.subs||[])];
+  if(Array.isArray(p.contacts)){
+    for(const c of p.contacts){
+      if(c&&c.name)out.push(c.name);
+      if(c&&c.company)out.push(c.company);
+      if(c&&c.email)out.push(c.email);
+    }
+  }
+  return out.filter(Boolean);
+}
 function getFiltered(q,sf){
   const s=(q||'').toLowerCase();
   return projects.filter(p=>{
-    const ms=!s||[p.name,p.addr,p.architect,p.contractor,p.ref,...(p.subs||[])].some(v=>(v||'').toLowerCase().includes(s));
+    const ms=!s||_projectSearchFields(p).some(v=>String(v).toLowerCase().includes(s));
     let mf=true;
     if(sf==='active')mf=p.stage==='spec'||p.stage==='quoting';
     else if(sf==='spec'||sf==='quoting'||sf==='won'||sf==='lost')mf=p.stage===sf;
@@ -4451,7 +4469,10 @@ function closeProjScreen(){
 
 function renderMiniList(q){
   const s=(q||'').toLowerCase();
-  const f=projects.filter(p=>!s||(p.name||'').toLowerCase().includes(s)||(p.addr||'').toLowerCase().includes(s)||(p.ref||'').toLowerCase().includes(s));
+  /* Phase 8v-3j: mini-list now uses the shared _projectSearchFields helper
+     so the in-project switcher matches the dashboard's broader search
+     (architect/MC/sub companies, contact names, addresses, refs etc.). */
+  const f=projects.filter(p=>!s||_projectSearchFields(p).some(v=>String(v).toLowerCase().includes(s)));
   document.getElementById('mini-list').innerHTML=f.map(p=>`
     <div class="mini-pc${p.flagged?' flagged':''}${currentProject&&currentProject.id===p.id?' sel':''}" onclick="switchProject(${p.id})">
       <div style="font-size:10px;color:#bbb;margin-bottom:2px;">${esc(p.ref)}</div>
@@ -4795,6 +4816,7 @@ function renderTab(){
           <select class="field-select" style="flex:1;" onchange="updateField(${p.id},'expectedBuildYear',this.value===''?null:+this.value)"><option value=""${p.expectedBuildYear==null?' selected':''}>Year</option>${BUILD_YEARS.map(y=>`<option value="${y}"${p.expectedBuildYear===y?' selected':''}>${y}</option>`).join('')}</select>
         </div>
       </div>
+      <div class="field"><div class="field-label">Site address</div>${textField('addr',p.addr,'text','')}</div>
       <div class="field"><div class="field-label">Last updated</div><div class="field-val" style="color:#777;font-weight:400;">${p.lastUpdated?fmtDate(p.lastUpdated):'—'}</div></div>
     </div>
     <div class="overview-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:18px;align-items:start;">
@@ -7043,7 +7065,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08e · dashboard-cleanup-daily-scan'
+      build:'2026-05-08f · search-broaden-site-address'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7208,7 +7230,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08e · dashboard-cleanup-daily-scan';
+const BACKUP_BUILD='2026-05-08f · search-broaden-site-address';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8790,7 +8812,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08e · dashboard-cleanup-daily-scan','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08f · search-broaden-site-address','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
