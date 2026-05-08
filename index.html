@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07s · thread-normalise+weblink</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07t · outlook-search+timeline-filter</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -2456,6 +2456,39 @@ function _rememberCompanyRole(companyName,role){
   }
   try{persistCompanyOverrides();}catch(e){}
 }
+/* Phase 8v-2x: build an Outlook web search URL that finds all emails on
+   a project involving a given company. Strategy:
+   - Use project name as the subject/keyword search (quoted phrase)
+   - AND domain-restrict: any contact at that company gives us the email
+     domain; we OR-combine project name with from:/to: domain filters
+   - Falls back to project name only if no contacts at that company
+   This produces URLs that actually match real Outlook search syntax,
+   unlike the previous "p.name + ' ' + Classicbuilders" which Outlook
+   couldn't match because Classicbuilders isn't a real word in any subject. */
+function _buildOutlookCompanySearchUrl(project,companyName){
+  const projName=(project&&project.name)||'';
+  const contacts=(project&&project.contacts)||[];
+  const co=(companyName||'').toLowerCase();
+  /* Collect every email-domain associated with this company on this project. */
+  const domains=new Set();
+  contacts.forEach(function(c){
+    if((c.company||'').toLowerCase()!==co)return;
+    if(!c.email)return;
+    const at=c.email.indexOf('@');
+    if(at<0)return;
+    const dom=c.email.substring(at+1).toLowerCase().trim();
+    if(dom)domains.add(dom);
+  });
+  let q=projName?'"'+projName+'"':'';
+  if(domains.size){
+    const parts=[];
+    domains.forEach(function(d){parts.push('from:'+d);parts.push('to:'+d);});
+    const domainQ='('+parts.join(' OR ')+')';
+    q=q?q+' AND '+domainQ:domainQ;
+  }
+  if(!q)q=companyName||'';
+  return 'https://outlook.office.com/mail/search/?q='+encodeURIComponent(q);
+}
 /* Phase 8v-2w: thread-level company normalisation.
    When a project's emails are imported, some may end up with company='Spp'
    or '' because the sender was SPP staff and Graph returned an empty to/cc.
@@ -3649,7 +3682,7 @@ function filterProjects(q){
 
 function openProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false;
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all';
   document.getElementById('dashboard-screen').style.display='none';
   document.getElementById('project-screen').classList.add('visible');
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
@@ -3680,7 +3713,7 @@ function filterMiniList(q){renderMiniList(q);}
 
 function switchProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false;
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all';
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
   updateEditToggle(); renderMiniList(document.getElementById('mini-search').value||''); renderDetail();
 }
@@ -3728,7 +3761,43 @@ function renderTab(){
   const body=document.getElementById('detail-body');
 
   if(currentTab==='timeline'){
-    const sorted=[...p.timeline].sort((a,b)=>b.date.localeCompare(a.date));
+    /* Phase 8v-2x: company filter + per-note company assignment.
+       The dropdown options are: All (default), then every distinct company
+       name on the project's contacts/emails. */
+    const allCompanies=new Set();
+    (p.contacts||[]).forEach(c=>{if(c.company)allCompanies.add(c.company);});
+    (p.emails||[]).forEach(e=>{if(e.company&&e.company.toLowerCase()!=='spp')allCompanies.add(e.company);});
+    const sortedCompanies=[...allCompanies].sort((a,b)=>a.localeCompare(b));
+    /* Currently-selected filter; default 'all'. Persists per-render via the
+       project-level state. */
+    if(typeof currentTimelineCompany==='undefined'||currentTimelineCompany===null)currentTimelineCompany='all';
+    /* Validate — drop the filter if its company no longer exists on the project. */
+    if(currentTimelineCompany!=='all'&&!sortedCompanies.includes(currentTimelineCompany))currentTimelineCompany='all';
+    /* Apply filter to timeline items. An item matches if:
+       - filter is 'all' (everything passes), OR
+       - item.sub === filter (auto-imported emails carry company in 'sub'), OR
+       - item.company === filter (notes/reminders explicitly assigned to a company) */
+    const filtered=[...p.timeline].filter(item=>{
+      if(currentTimelineCompany==='all')return true;
+      if(item.sub===currentTimelineCompany)return true;
+      if(item.company===currentTimelineCompany)return true;
+      return false;
+    });
+    const sorted=filtered.sort((a,b)=>b.date.localeCompare(a.date));
+    const filterDropdown=
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
+      +'<label style="font-size:11px;color:#666;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;">Filter by company</label>'
+      +'<select onchange="setTimelineCompany(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;">'
+        +'<option value="all"'+(currentTimelineCompany==='all'?' selected':'')+'>All companies</option>'
+        +sortedCompanies.map(co=>'<option value="'+esc(co)+'"'+(currentTimelineCompany===co?' selected':'')+'>'+esc(co)+'</option>').join('')
+      +'</select>'
+      +(currentTimelineCompany!=='all'?'<span style="font-size:11px;color:#888;">Showing '+filtered.length+' of '+p.timeline.length+' entries</span>':'')
+      +'</div>';
+    /* Note input now also has a company selector. Default = currently-filtered
+       company so it's quick to add notes while reviewing one company's history. */
+    const noteCompanyOptions=
+      '<option value="">All / no specific company</option>'
+      +sortedCompanies.map(co=>'<option value="'+esc(co)+'"'+(currentTimelineCompany===co?' selected':'')+'>'+esc(co)+'</option>').join('');
     const addBar=`
       <div class="timeline-add">
         <div class="tl-avatar">RH</div>
@@ -3739,6 +3808,7 @@ function renderTab(){
               <button class="tl-type active" id="tltype-note" onclick="setTlType('note',this)">Note</button>
               <button class="tl-type" id="tltype-reminder" onclick="setTlType('reminder',this)">Reminder</button>
             </div>
+            <select id="tl-note-company" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;margin-left:8px;" title="Allocate this note/reminder to a specific company">${noteCompanyOptions}</select>
             <button class="btn btn-primary btn-sm" onclick="addTimelineItem()">Add</button>
           </div>
         </div>
@@ -3755,14 +3825,16 @@ function renderTab(){
         const jumpAttr=item.emailId?' onclick="_jumpToEmail('+JSON.stringify(item.emailId).replace(/"/g,'&quot;')+')" style="cursor:pointer;"':'';
         cardHtml='<div class="tl-card tl-card-compact"'+jumpAttr+'><div style="font-size:12px;color:#444;line-height:1.5;"><strong>'+author+'</strong>'+company+' '+(item.isOutbound?'replied':'sent')+': <span style="color:#222;">'+subj+'</span></div></div>';
       } else if(item.type==='note'){
-        cardHtml=`<div class="tl-note-text">${esc(item.text)}</div>`;
+        const coBadge=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
+        cardHtml=`<div class="tl-note-text">${coBadge}${esc(item.text)}</div>`;
       } else if(item.type==='reminder'){
         const rem=p.reminders.find(r=>r.id===item.remId)||{};
         const isDone=rem.done||false;
+        const remCoBadge=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
         cardHtml=`<div class="rem-card">
           <div class="rem-check${isDone?' done':''}" onclick="toggleReminderDone('${item.remId}')">${isDone?'<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':''}</div>
           <div class="rem-content">
-            <div class="rem-text${isDone?' rem-done-text':''}">${esc(item.remText)}</div>
+            <div class="rem-text${isDone?' rem-done-text':''}">${remCoBadge}${esc(item.remText)}</div>
             <div class="rem-date">${fmtDate(item.date)}${item.date<today()&&!isDone?' <span style="color:#a32d2d;font-weight:600;">· overdue</span>':''}</div>
             ${item.remNotes?`<div class="rem-note">${esc(item.remNotes)}</div>`:''}
             ${isDone?`<div class="tl-done-badge"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#27500a" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>Completed</div>`:''}
@@ -3786,7 +3858,7 @@ function renderTab(){
         </div>
       </div>`;
     }).join('');
-    body.innerHTML=addBar+`<div class="timeline">${items}</div>`;
+    body.innerHTML=filterDropdown+addBar+`<div class="timeline">${items}</div>`;
 
   } else if(currentTab==='overview'){
     const fu=p.followUp||'', fuOD=fu&&fu<today();
@@ -3898,7 +3970,7 @@ function renderTab(){
     const coBlocks=companies.map(co=>{
       const ces=roleEmails.filter(e=>(e.company||'(no company)')===co);
       const isOpen=expanded[co]===true;
-      const coSearchUrl=`https://outlook.office.com/mail/search/${encodeURIComponent(p.name+' '+co)}`;
+      const coSearchUrl=_buildOutlookCompanySearchUrl(p,co);
       /* Cluster emails into threads by conversationId. Emails without a
          conversationId each go in their own thread. */
       const threads=new Map();
@@ -3981,22 +4053,36 @@ function renderTab(){
 }
 
 let currentTlType='note';
+/* Phase 8v-2x: timeline company filter state — 'all' or a company name.
+   Survives tab switches but resets when the user navigates to a new project. */
+let currentTimelineCompany='all';
 function setTlType(type,el){
   currentTlType=type;
   document.querySelectorAll('.tl-type').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
+}
+function setTimelineCompany(co){
+  currentTimelineCompany=co||'all';
+  renderTab();
 }
 
 function addTimelineItem(){
   const input=document.getElementById('tl-note-input');
   const text=input.value.trim();
   if(!text)return;
+  /* Phase 8v-2x: capture the company allocation from the dropdown. Empty
+     value means "no specific company" — note shows in the All view but not
+     in any company-filtered view (matches user expectation). */
+  const coSelect=document.getElementById('tl-note-company');
+  const allocCompany=coSelect?coSelect.value:'';
   if(currentTlType==='reminder'){
-    showReminderModal(null,text);
+    showReminderModal(null,text,allocCompany||null);
     input.value='';
     return;
   }
-  currentProject.timeline.unshift({id:uid(),type:'note',date:today(),author:ME,action:'added a note',text});
+  const entry={id:uid(),type:'note',date:today(),author:ME,action:'added a note',text:text};
+  if(allocCompany)entry.company=allocCompany;
+  currentProject.timeline.unshift(entry);
   input.value='';
   persistProjects();
   renderTab();
@@ -4262,8 +4348,12 @@ function toggleReminderDone(rid){
 }
 
 /* Reminder modal */
-function showReminderModal(rid,prefillText){
+/* Phase 8v-2x: pendingReminderCompany carries the company allocation
+   from the timeline note input through the reminder modal to saveReminder. */
+let pendingReminderCompany=null;
+function showReminderModal(rid,prefillText,prefillCompany){
   editingRemId=rid; remModalDone=false;
+  pendingReminderCompany=prefillCompany||null;
   document.getElementById('rem-modal-title').textContent=rid?'Edit reminder':'Set reminder';
   if(rid){
     const r=currentProject.reminders.find(r=>r.id===rid);
@@ -4271,6 +4361,7 @@ function showReminderModal(rid,prefillText){
     document.getElementById('rem-date').value=r.date||'';
     document.getElementById('rem-notes').value=r.notes||'';
     remModalDone=r.done||false;
+    if(r&&r.company)pendingReminderCompany=r.company;
   } else {
     document.getElementById('rem-text').value=prefillText||'';
     document.getElementById('rem-date').value='';
@@ -4298,13 +4389,20 @@ function saveReminder(){
   if(editingRemId){
     const r=currentProject.reminders.find(r=>r.id===editingRemId);
     const ti=currentProject.timeline.find(t=>t.remId===editingRemId);
-    if(r){r.text=text;r.date=date;r.notes=notes;r.done=remModalDone;r.soon=date&&date<=today();}
-    if(ti){ti.remText=text;ti.date=date;ti.remNotes=notes;}
+    if(r){r.text=text;r.date=date;r.notes=notes;r.done=remModalDone;r.soon=date&&date<=today();if(pendingReminderCompany)r.company=pendingReminderCompany;}
+    if(ti){ti.remText=text;ti.date=date;ti.remNotes=notes;if(pendingReminderCompany)ti.company=pendingReminderCompany;}
   } else {
     const newId=uid();
-    currentProject.reminders.push({id:newId,text:text||'Follow up',date,soon:date&&date<=today(),done:remModalDone,notes});
-    currentProject.timeline.unshift({id:uid(),type:'reminder',date:date||today(),author:ME,action:'set a reminder',remText:text||'Follow up',remNotes:notes,done:remModalDone,remId:newId});
+    /* Phase 8v-2x: persist the optional company allocation onto both the
+       reminder record and its mirror timeline entry. */
+    const remRec={id:newId,text:text||'Follow up',date,soon:date&&date<=today(),done:remModalDone,notes};
+    if(pendingReminderCompany)remRec.company=pendingReminderCompany;
+    currentProject.reminders.push(remRec);
+    const tlEntry={id:uid(),type:'reminder',date:date||today(),author:ME,action:'set a reminder',remText:text||'Follow up',remNotes:notes,done:remModalDone,remId:newId};
+    if(pendingReminderCompany)tlEntry.company=pendingReminderCompany;
+    currentProject.timeline.unshift(tlEntry);
   }
+  pendingReminderCompany=null;
   persistProjects();
   hideReminderModal();
   renderTab();
@@ -5187,7 +5285,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07s · thread-normalise+weblink'
+      build:'2026-05-07t · outlook-search+timeline-filter'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -5352,7 +5450,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07s · thread-normalise+weblink';
+const BACKUP_BUILD='2026-05-07t · outlook-search+timeline-filter';
 function exportBackup(){
   const payload={
     _meta:{
@@ -6929,7 +7027,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07s · thread-normalise+weblink','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07t · outlook-search+timeline-filter','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
