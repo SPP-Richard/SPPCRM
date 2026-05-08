@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07y · files-sync+meeting-fix</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07z · files-sync-bytes-fix</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -4738,57 +4738,94 @@ async function _uploadProjectFiles(){
 async function _syncProjectAttachmentsFromEmails(){
   if(!currentProject)return;
   if(!dataDirHandle){alert('No data folder connected. Connect one via Admin → Snapshots first.');return;}
-  /* Phase 8v-3c: iterate every email on the project. Graph returns an empty
+  /* Phase 8v-3d: iterate every email on the project. Graph returns an empty
      attachments array for messages without — so checking is cheap and we
      don't depend on the local hasAttachments flag (which legacy imports
-     missed). Skip inline "image" attachments (signature logos etc.) to
-     avoid noise — only pull actual file attachments. */
+     missed). Skip inline "image" attachments (signature logos etc.) and
+     non-file attachments (item / reference) — only pull file attachments.
+
+     IMPORTANT: do NOT use $select on this endpoint. Graph drops contentBytes
+     from the response when $select is used with a non-fileAttachment subset.
+     Fetching the full attachment object guarantees contentBytes for real
+     fileAttachments. (This was the 7y "55 failed" bug.) */
   const allEmails=currentProject.emails||[];
   if(!allEmails.length){alert('No emails on this project.');return;}
-  if(!confirm('Check '+allEmails.length+' email(s) for attachments?\n\nThis queries Microsoft Graph for each email. Real file attachments are saved; inline signature images are skipped. Takes a second or two per email.'))return;
+  if(!confirm('Check '+allEmails.length+' email(s) for attachments?\n\nThis queries Microsoft Graph for each email. Real file attachments are saved; inline images, embedded emails, and OneDrive links are skipped. Takes a second or two per email.'))return;
   let token;
   try{token=await getAccessToken(['Mail.Read']);}
   catch(e){alert('Auth failed: '+(e.message||e));return;}
   if(!token){alert('Not signed in.');return;}
-  let added=0,skipped=0,failed=0,checked=0,inlineSkipped=0;
+  let added=0,skipped=0,failed=0,checked=0,inlineSkipped=0,itemSkipped=0,refSkipped=0;
+  let firstError='';
   for(const email of allEmails){
     checked++;
     try{
-      const r=await fetch('https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'/attachments?$select=id,name,size,contentType,contentBytes,isInline',{headers:{'Authorization':'Bearer '+token}});
-      if(!r.ok){failed++;continue;}
+      /* No $select — full attachment objects, including contentBytes for
+         file attachments. $expand on attachments isn't supported on this
+         endpoint, so fetching everything is the right call. */
+      const r=await fetch('https://graph.microsoft.com/v1.0/me/messages/'+encodeURIComponent(email.id)+'/attachments',{headers:{'Authorization':'Bearer '+token}});
+      if(!r.ok){
+        failed++;
+        if(!firstError){
+          let detail='HTTP '+r.status;
+          try{
+            const errJson=await r.json();
+            const msg=errJson&&errJson.error&&errJson.error.message;
+            const code=errJson&&errJson.error&&errJson.error.code;
+            if(code||msg)detail+=' — '+(code?code+': ':'')+(msg||'');
+          }catch(_){}
+          firstError=detail;
+        }
+        continue;
+      }
       const data=await r.json();
       const atts=data.value||[];
       /* Now we know the truth — patch the email's hasAttachments locally
          so subsequent UI matches reality. */
       email.hasAttachments=atts.length>0;
       for(const att of atts){
+        const odataType=att['@odata.type']||'';
+        /* Skip non-file attachment types (embedded emails / OneDrive links). */
+        if(odataType.indexOf('itemAttachment')>=0){itemSkipped++;continue;}
+        if(odataType.indexOf('referenceAttachment')>=0){refSkipped++;continue;}
         /* Skip inline images (signature logos, embedded screenshots) */
         if(att.isInline){inlineSkipped++;continue;}
         const already=(currentProject.files||[]).some(function(f){return f.sourceEmailId===email.id&&f.name===att.name;});
         if(already){skipped++;continue;}
-        if(!att.contentBytes){failed++;continue;}
-        const bin=atob(att.contentBytes);
-        const bytes=new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-        const finalName=await _writeProjectFileBytes(currentProject,att.name,bytes);
-        if(!Array.isArray(currentProject.files))currentProject.files=[];
-        currentProject.files.push({
-          id:'file-'+Date.now()+'-'+Math.floor(Math.random()*1000),
-          name:att.name,
-          fsaName:finalName,
-          size:att.size||bytes.length,
-          date:(email.date||today()),
-          sourceType:'email',
-          sourceEmailId:email.id,
-          senderEmail:email.fromEmail||'',
-          addedBy:email.from||email.fromEmail||'?',
-          contentType:att.contentType||''
-        });
-        added++;
+        if(!att.contentBytes){
+          failed++;
+          if(!firstError)firstError='Attachment "'+(att.name||'?')+'" returned no contentBytes (type: '+(odataType||'unknown')+')';
+          continue;
+        }
+        try{
+          const bin=atob(att.contentBytes);
+          const bytes=new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+          const finalName=await _writeProjectFileBytes(currentProject,att.name,bytes);
+          if(!Array.isArray(currentProject.files))currentProject.files=[];
+          currentProject.files.push({
+            id:'file-'+Date.now()+'-'+Math.floor(Math.random()*1000),
+            name:att.name,
+            fsaName:finalName,
+            size:att.size||bytes.length,
+            date:(email.date||today()),
+            sourceType:'email',
+            sourceEmailId:email.id,
+            senderEmail:email.fromEmail||'',
+            addedBy:email.from||email.fromEmail||'?',
+            contentType:att.contentType||''
+          });
+          added++;
+        }catch(writeErr){
+          failed++;
+          if(!firstError)firstError='Write failed for "'+(att.name||'?')+'": '+(writeErr&&writeErr.message||writeErr);
+          try{console.warn('[Phase 8v-3d] Write failed',att.name,writeErr);}catch(_){}
+        }
       }
     }catch(err){
       failed++;
-      try{console.warn('[Phase 8v-3c] Attachment sync failed for email',email.id,err);}catch(_){}
+      if(!firstError)firstError='Network/JS error: '+(err&&err.message||err);
+      try{console.warn('[Phase 8v-3d] Attachment sync failed for email',email.id,err);}catch(_){}
     }
   }
   persistProjects();
@@ -4798,7 +4835,10 @@ async function _syncProjectAttachmentsFromEmails(){
     'Added: '+added+' file'+(added===1?'':'s'),
     skipped?'Already synced (skipped): '+skipped:'',
     inlineSkipped?'Inline images skipped: '+inlineSkipped:'',
-    failed?'Failed: '+failed:''
+    itemSkipped?'Embedded emails skipped: '+itemSkipped:'',
+    refSkipped?'OneDrive links skipped: '+refSkipped:'',
+    failed?'Failed: '+failed:'',
+    failed&&firstError?'First error: '+firstError:''
   ].filter(Boolean).join('\n');
   alert('Sync complete.\n\n'+summary);
 }
@@ -6463,7 +6503,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07y · files-sync+meeting-fix'
+      build:'2026-05-07z · files-sync-bytes-fix'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -6628,7 +6668,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07y · files-sync+meeting-fix';
+const BACKUP_BUILD='2026-05-07z · files-sync-bytes-fix';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8205,7 +8245,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07y · files-sync+meeting-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07z · files-sync-bytes-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
