@@ -686,7 +686,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Inbox scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-07v · emails-redesign+follow-up</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-07w · overview+timeline+quickactions</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av">RH</div>
@@ -814,7 +814,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div class="ckb" id="edit-cb"></div>
           <span>Edit details</span>
         </label>
-        <button class="btn btn-sm" id="merge-project-btn" onclick="mergeCurrentProject()" style="margin-left:8px;font-size:11px;" title="Merge this project into another (combines emails, contacts, timeline, then deletes this one)">Merge into…</button>
       </div>
       <div class="pb" id="detail-body"></div>
     </div>
@@ -2413,10 +2412,60 @@ function _mergeProjectInto(sourceId,targetId){
   }
 }
 function mergeCurrentProject(){
-  /* Called from the project header. */
+  /* Called from the project header. (Phase 8v-3a: button removed from UI
+     but the function is still callable in case existing keybinds invoke it.) */
   if(typeof currentProject==='undefined'||!currentProject)return;
   if(projects.length<2){alert('You need at least 2 projects to merge.');return;}
   openProjectPicker({mode:'merge-into',sourceId:currentProject.id});
+}
+/* Phase 8v-3a: Click a chip on the Overview to jump to the company page. */
+function _openCompanyFromChip(companyName){
+  if(!companyName)return;
+  if(typeof openCompanyDetail==='function'){
+    try{openCompanyDetail(companyName);return;}catch(e){}
+  }
+  /* Fallback: navigate to companies tab if direct detail open isn't available. */
+  if(typeof setNav==='function'){
+    const navItems=document.querySelectorAll('.sidebar .ni');
+    /* Companies sidebar item — using the same index trick as statCardNav. */
+    setNav(navItems[3]||null,'companies');
+  }
+}
+/* Phase 8v-3a: Set project reminder. Same as the email follow-up flag but
+   the calendar event body links back to the PROJECT page (via the URL
+   deep-link) rather than a specific email. */
+function setProjectReminder(){
+  if(!currentProject)return;
+  pendingReminderCompany=null;
+  pendingReminderEmailId=null;
+  pendingReminderPushToCalendar=true;
+  pendingReminderProjectId=currentProject.id;
+  showReminderModal(null,'',null);
+  /* Default to tomorrow same time. */
+  const t=new Date();t.setDate(t.getDate()+1);
+  setTimeout(function(){
+    const dEl=document.getElementById('rem-date');
+    if(dEl)dEl.value=t.toISOString().slice(0,10);
+  },20);
+}
+/* Phase 8v-3a: rename the current project. Updates p.name, persists, and
+   re-renders the breadcrumb + the project list. The Outlook category and
+   ref are NOT renamed — those use the seq number, which stays. */
+function renameCurrentProject(){
+  if(!currentProject)return;
+  const newName=prompt('Rename project:\n\nCurrent name: '+(currentProject.name||'(no name)'),currentProject.name||'');
+  if(newName===null)return;
+  const trimmed=String(newName).trim();
+  if(!trimmed){alert('Project name cannot be blank.');return;}
+  if(trimmed===currentProject.name)return;
+  currentProject.name=trimmed;
+  currentProject.lastUpdated=today();
+  persistProjects();
+  /* Update breadcrumb and re-render. */
+  try{document.getElementById('proj-breadcrumb').textContent=currentProject.name;}catch(e){}
+  renderTab();
+  try{filterProjects(document.getElementById('search-box').value||'');}catch(e){}
+  try{renderMiniList(document.getElementById('mini-search').value||'');}catch(e){}
 }
 function _realScanSkip(emailId){
   if(!realScanState)return;
@@ -2729,6 +2778,15 @@ async function _retagProjectEmails(project){
    Returns the created event so callers can store its id (for later cancel).
    tz hard-coded to Europe/London — SPP is UK-based. If we ever onboard
    non-UK users this needs reading from the user's mailbox settings. */
+/* Phase 8v-3a: build a deep-link URL back to a specific project in the
+   CRM, used in calendar event bodies for project-level reminders. */
+function _buildProjectDeepLink(projectId){
+  try{
+    const loc=window.location;
+    const base=loc.origin+loc.pathname.replace(/\/?index\.html$/,'/').replace(/[^/]*$/,'');
+    return base+'?project='+encodeURIComponent(projectId);
+  }catch(e){return '';}
+}
 async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
   const token=await getAccessToken(['Calendars.ReadWrite']);
   if(!token)throw new Error('Calendar push: not signed in or Calendars.ReadWrite not granted');
@@ -3258,6 +3316,34 @@ async function getAccessToken(scopes){
 }
 /* Initialize after DOM is ready and MSAL CDN script has had a chance to load. */
 setTimeout(_initAuth,50);
+/* Phase 8v-3a: URL ?project=N deep-link. After projects hydrate (and auth
+   resolves if signed in), if the URL contains ?project=N, open that project.
+   Used by calendar event bodies that link back to the project page. */
+function _handleProjectDeepLink(){
+  try{
+    const params=new URLSearchParams(window.location.search||'');
+    const projId=params.get('project');
+    if(!projId)return;
+    const id=parseInt(projId,10);
+    if(isNaN(id))return;
+    /* Wait for projects to be hydrated. Schedule with a small delay to
+       allow init scripts (auth check, persistence load) to complete. */
+    let attempts=0;
+    const tryOpen=function(){
+      attempts++;
+      if(typeof projects!=='undefined'&&Array.isArray(projects)&&projects.length){
+        const p=projects.find(function(x){return x.id===id;});
+        if(p&&typeof openProject==='function'){
+          openProject(id);
+          return;
+        }
+      }
+      if(attempts<20)setTimeout(tryOpen,150);
+    };
+    setTimeout(tryOpen,400);
+  }catch(e){try{console.warn('[Phase 8v-3a] Deep-link handling failed',e);}catch(_){}}
+}
+try{_handleProjectDeepLink();}catch(e){}
 
 /* Current user. In a real deployment, ME comes from Office 365 sign-in
    and admin role comes from an Entra ID group claim. Here it's mutable
@@ -3982,7 +4068,7 @@ function filterProjects(q){
 
 function openProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; _emailTabInit();
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; _emailTabInit();
   document.getElementById('dashboard-screen').style.display='none';
   document.getElementById('project-screen').classList.add('visible');
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
@@ -4020,7 +4106,7 @@ function filterMiniList(q){renderMiniList(q);}
 
 function switchProject(id){
   currentProject=projects.find(p=>p.id===id);
-  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; _emailTabInit();
+  currentTab='overview'; currentEmailRole='architect'; expanded={}; editMode=false; currentTimelineCompany='all'; currentTimelineType='all'; currentTlType='note'; _emailTabInit();
   document.getElementById('proj-breadcrumb').textContent=currentProject.name;
   /* Phase 8v-2y: surface the Outlook category in the project header so it's
      visible without scrolling the Overview tab. */
@@ -4065,7 +4151,10 @@ function tlIcon(type){
     reminder:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#27500a" stroke-width="1.5"><circle cx="8" cy="8" r="5"/><path d="M8 5v3l2 1"/></svg>`,
     status:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#444" stroke-width="1.5"><path d="M3 8l3.5 3.5L13 5"/></svg>`,
     file:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#72243e" stroke-width="1.5"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>`,
-    flag:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#a32d2d" stroke-width="1.5"><path d="M3 2v12M3 2l9 3-9 3"/></svg>`
+    flag:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#a32d2d" stroke-width="1.5"><path d="M3 2v12M3 2l9 3-9 3"/></svg>`,
+    /* Phase 8v-3a: call/meeting icons. */
+    call:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#185fa5" stroke-width="1.5"><path d="M3 3h3l2 4-2 1a8 8 0 004 4l1-2 4 2v3a1 1 0 01-1 1A12 12 0 013 4a1 1 0 011-1z"/></svg>`,
+    meeting:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#7a3ea3" stroke-width="1.5"><circle cx="6" cy="5" r="2"/><circle cx="11" cy="6" r="1.5"/><path d="M2 13c.5-2 2-3 4-3s3.5 1 4 3M9 12c.5-1.5 1.5-2.5 3-2.5s2 .5 2 1.5"/></svg>`
   };
   return icons[type]||icons.note;
 }
@@ -4087,42 +4176,76 @@ function renderTab(){
     if(typeof currentTimelineCompany==='undefined'||currentTimelineCompany===null)currentTimelineCompany='all';
     /* Validate — drop the filter if its company no longer exists on the project. */
     if(currentTimelineCompany!=='all'&&!sortedCompanies.includes(currentTimelineCompany))currentTimelineCompany='all';
-    /* Apply filter to timeline items. An item matches if:
-       - filter is 'all' (everything passes), OR
-       - item.sub === filter (auto-imported emails carry company in 'sub'), OR
-       - item.company === filter (notes/reminders explicitly assigned to a company) */
+    /* Apply filters to timeline items.
+       Phase 8v-2x: company filter
+       Phase 8v-3a: type filter (emails/notes/calls/meetings/reminders) */
+    if(typeof currentTimelineType==='undefined'||currentTimelineType===null)currentTimelineType='all';
     const filtered=[...p.timeline].filter(item=>{
-      if(currentTimelineCompany==='all')return true;
-      if(item.sub===currentTimelineCompany)return true;
-      if(item.company===currentTimelineCompany)return true;
-      return false;
+      /* Company match */
+      if(currentTimelineCompany!=='all'){
+        if(item.sub!==currentTimelineCompany&&item.company!==currentTimelineCompany)return false;
+      }
+      /* Type match — call has subType, all others match by item.type */
+      if(currentTimelineType!=='all'){
+        if(currentTimelineType==='call'&&item.type!=='call')return false;
+        if(currentTimelineType!=='call'&&item.type!==currentTimelineType)return false;
+      }
+      return true;
     });
-    const sorted=filtered.sort((a,b)=>b.date.localeCompare(a.date));
+    const sorted=filtered.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    const typeOptions=[
+      ['all','All types'],
+      ['email','Emails'],
+      ['note','Notes'],
+      ['call','Calls'],
+      ['meeting','Meetings'],
+      ['reminder','Reminders']
+    ];
     const filterDropdown=
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;">'
-      +'<label style="font-size:11px;color:#666;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;">Filter by company</label>'
-      +'<select onchange="setTimelineCompany(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;">'
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;flex-wrap:wrap;">'
+      +'<label style="font-size:11px;color:#666;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;">Filter</label>'
+      +'<select onchange="setTimelineCompany(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;" title="Filter by company">'
         +'<option value="all"'+(currentTimelineCompany==='all'?' selected':'')+'>All companies</option>'
         +sortedCompanies.map(co=>'<option value="'+esc(co)+'"'+(currentTimelineCompany===co?' selected':'')+'>'+esc(co)+'</option>').join('')
       +'</select>'
-      +(currentTimelineCompany!=='all'?'<span style="font-size:11px;color:#888;">Showing '+filtered.length+' of '+p.timeline.length+' entries</span>':'')
+      +'<select onchange="setTimelineType(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;" title="Filter by entry type">'
+        +typeOptions.map(o=>'<option value="'+o[0]+'"'+(currentTimelineType===o[0]?' selected':'')+'>'+esc(o[1])+'</option>').join('')
+      +'</select>'
+      +((currentTimelineCompany!=='all'||currentTimelineType!=='all')?'<span style="font-size:11px;color:#888;">Showing '+filtered.length+' of '+p.timeline.length+'</span>':'')
       +'</div>';
     /* Note input now also has a company selector. Default = currently-filtered
        company so it's quick to add notes while reviewing one company's history. */
     const noteCompanyOptions=
       '<option value="">All / no specific company</option>'
       +sortedCompanies.map(co=>'<option value="'+esc(co)+'"'+(currentTimelineCompany===co?' selected':'')+'>'+esc(co)+'</option>').join('');
+    /* Phase 8v-3a: extra date/time inputs surface only for non-note types
+       so the default note flow stays one-click. */
+    const showDateTime=currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting';
+    const showDuration=currentTlType==='meeting';
+    const nowDate=today();
+    const nowTime=(function(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');})();
+    const dtInputsHtml=showDateTime
+      ?'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'
+        +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Date <input type="date" id="tl-entry-date" value="'+nowDate+'" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;"/></label>'
+        +'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Time <input type="time" id="tl-entry-time" value="'+nowTime+'" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;"/></label>'
+        +(showDuration?'<label style="font-size:11px;color:#666;display:inline-flex;align-items:center;gap:4px;">Duration <input type="number" id="tl-entry-duration" value="60" min="5" step="5" style="font-size:12px;padding:3px 6px;border:1px solid #d3dce6;border-radius:4px;width:60px;"/> min</label>':'')
+      +'</div>'
+      :'';
     const addBar=`
       <div class="timeline-add">
         <div class="tl-avatar">RH</div>
         <div class="tl-input-wrap">
-          <textarea class="tl-input" id="tl-note-input" rows="2" placeholder="Add a note, set a reminder, or log a call…"></textarea>
-          <div class="tl-input-actions">
+          <textarea class="tl-input" id="tl-note-input" rows="2" placeholder="Add a note, log a call, set a reminder…"></textarea>
+          ${dtInputsHtml}
+          <div class="tl-input-actions" style="flex-wrap:wrap;gap:6px;">
             <div class="tl-type-pills">
-              <button class="tl-type active" id="tltype-note" onclick="setTlType('note',this)">Note</button>
-              <button class="tl-type" id="tltype-reminder" onclick="setTlType('reminder',this)">Reminder</button>
+              <button class="tl-type${currentTlType==='note'?' active':''}" onclick="setTlType('note',this)">Note</button>
+              <button class="tl-type${currentTlType==='reminder'?' active':''}" onclick="setTlType('reminder',this)">Reminder</button>
+              <button class="tl-type${currentTlType==='call-in'?' active':''}" onclick="setTlType('call-in',this)">Call inbound</button>
+              <button class="tl-type${currentTlType==='call-out'?' active':''}" onclick="setTlType('call-out',this)">Call outbound</button>
+              <button class="tl-type${currentTlType==='meeting'?' active':''}" onclick="setTlType('meeting',this)">Meeting</button>
             </div>
-            <select id="tl-note-company" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;margin-left:8px;" title="Allocate this note/reminder to a specific company">${noteCompanyOptions}</select>
+            <select id="tl-note-company" style="font-size:12px;padding:4px 8px;border:1px solid #d3dce6;border-radius:4px;background:#fff;margin-left:8px;" title="Allocate this entry to a specific company">${noteCompanyOptions}</select>
             <button class="btn btn-primary btn-sm" onclick="addTimelineItem()">Add</button>
           </div>
         </div>
@@ -4159,6 +4282,16 @@ function renderTab(){
         cardHtml=`<span class="sbadge s-${(item.text||'').toLowerCase()}">${esc(item.text)}</span>`;
       } else if(item.type==='flag'){
         cardHtml=`<div class="eflag" style="margin-bottom:0;margin-top:4px;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 10.5v.5"/></svg>${esc(item.text)}</div>`;
+      } else if(item.type==='call'){
+        const callCo=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
+        const dirLabel=item.subType==='in'?'Inbound':item.subType==='out'?'Outbound':'';
+        const timeStr=item.time?' at '+esc(item.time):'';
+        cardHtml=`<div class="tl-note-text">${callCo}<span style="display:inline-block;font-size:10px;background:#e6f0fa;color:#185fa5;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(dirLabel)} call${timeStr}</span>${esc(item.text)}</div>`;
+      } else if(item.type==='meeting'){
+        const mtCo=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
+        const timeStr=item.time?' at '+esc(item.time):'';
+        const durStr=item.duration?' · '+item.duration+' min':'';
+        cardHtml=`<div class="tl-note-text">${mtCo}<span style="display:inline-block;font-size:10px;background:#f3e9f7;color:#7a3ea3;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">Meeting${timeStr}${durStr}</span>${esc(item.text)}</div>`;
       }
       return `<div class="tl-item">
         <div class="tl-icon ${item.type}">${tlIcon(item.type)}</div>
@@ -4176,10 +4309,20 @@ function renderTab(){
 
   } else if(currentTab==='overview'){
     const fu=p.followUp||'', fuOD=fu&&fu<today();
-    /* Phase 8v-2u: derive sub & main-contractor chip lists from contacts so
-       the overview always reflects the latest type assignments. Merge with
-       legacy stored arrays (p.subs[] and the p.contractor text field) so
-       seed data and any pre-existing manual entries still appear. */
+    /* Phase 8v-3a: derive Architect / Main contractor / Sub-contractor chip
+       lists from contacts. The legacy text fields p.architect / p.contractor
+       are merged in so seed data and pre-existing manual entries still appear.
+       All chips are clickable — they navigate to the company detail page so
+       you can see all projects + emails for that company. */
+    function _chipFor(name){
+      const safe=esc(name);
+      const arg=JSON.stringify(name).replace(/"/g,'&quot;');
+      return '<span class="sch" style="cursor:pointer;" onclick="_openCompanyFromChip('+arg+')" title="Open '+safe+' company page"><span class="sbd"></span>'+safe+'</span>';
+    }
+    const _archFromContacts=[...new Set(p.contacts.filter(c=>c.type==='architect').map(c=>c.company).filter(Boolean))];
+    const _archCombined=[];
+    if(p.architect)_archCombined.push(p.architect);
+    _archFromContacts.forEach(co=>{if(!_archCombined.some(x=>x.toLowerCase()===co.toLowerCase()))_archCombined.push(co);});
     const _mcCompaniesFromContacts=[...new Set(p.contacts.filter(c=>c.type==='mc').map(c=>c.company).filter(Boolean))];
     const _mcCombined=[];
     if(p.contractor)_mcCombined.push(p.contractor);
@@ -4187,24 +4330,32 @@ function renderTab(){
     const _subCompaniesFromContacts=[...new Set(p.contacts.filter(c=>c.type==='sub').map(c=>c.company).filter(Boolean))];
     const _subCombined=[].concat(p.subs||[]);
     _subCompaniesFromContacts.forEach(co=>{if(!_subCombined.some(x=>x.toLowerCase()===co.toLowerCase()))_subCombined.push(co);});
-    const mcs=_mcCombined.length?_mcCombined.map(s=>`<span class="sch"><span class="sbd"></span>${esc(s)}</span>`).join(''):`<span style="font-size:12px;color:#aaa;">None recorded</span>`;
-    const subs=_subCombined.length?_subCombined.map(s=>`<span class="sch"><span class="sbd"></span>${esc(s)}</span>`).join(''):`<span style="font-size:12px;color:#aaa;">None recorded</span>`;
+    const archs=_archCombined.length?_archCombined.map(_chipFor).join(''):`<span style="font-size:12px;color:#aaa;">None recorded</span>`;
+    const mcs=_mcCombined.length?_mcCombined.map(_chipFor).join(''):`<span style="font-size:12px;color:#aaa;">None recorded</span>`;
+    const subs=_subCombined.length?_subCombined.map(_chipFor).join(''):`<span style="font-size:12px;color:#aaa;">None recorded</span>`;
     const ef=p.flagged?`<div class="eflag"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 10.5v.5"/></svg>Missing project details — reminder set to investigate.</div>`:'';
     /* Always-editable text/date field */
     const textField=(field,val,inputType='text',extraStyle='')=>`<input class="field-input" type="${inputType}" value="${esc(val||'')}" style="${extraStyle}" onchange="updateField(${p.id},'${field}',this.value)"/>`;
-    /* Edit-mode-gated field — only Architect and Main contractor */
-    const gatedField=(field,val)=>editMode
-      ?`<input class="field-input" type="text" value="${esc(val||'')}" onchange="updateField(${p.id},'${field}',this.value)"/>`
-      :`<div class="field-val">${esc(val||'')}</div>`;
+    /* Phase 8v-3a: SPP doc ref now combines a type dropdown (Quote /
+       Sales order / None) with a free-text number field. Backed by
+       p.sppRefType + p.sppRef (the existing field for the number). */
+    const sppType=p.sppRefType||'';
+    const sppRefField=
+      '<div style="display:flex;gap:4px;">'
+        +'<select onchange="updateField('+p.id+',&quot;sppRefType&quot;,this.value)" style="font-size:12px;padding:5px 6px;border:1px solid #d3dce6;border-radius:4px;background:#fff;flex:0 0 auto;width:110px;">'
+          +'<option value=""'+(sppType===''?' selected':'')+'>—</option>'
+          +'<option value="quote"'+(sppType==='quote'?' selected':'')+'>Quote</option>'
+          +'<option value="salesOrder"'+(sppType==='salesOrder'?' selected':'')+'>Sales order</option>'
+        +'</select>'
+        +'<input class="field-input" type="text" value="'+esc(p.sppRef||'')+'" placeholder="number" style="flex:1;" onchange="updateField('+p.id+',&quot;sppRef&quot;,this.value)"/>'
+      +'</div>';
     body.innerHTML=`${ef}
     <div class="field-grid">
       <div class="field"><div class="field-label">Stage</div>
         <select class="field-select" onchange="updateField(${p.id},'stage',this.value)">${['spec','quoting','won','lost'].map(s=>`<option value="${s}"${s===p.stage?' selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}</select>
       </div>
-      <div class="field"><div class="field-label">SPP ref</div>${textField('sppRef',p.sppRef,'text')}</div>
+      <div class="field"><div class="field-label">SPP doc ref</div>${sppRefField}</div>
       <div class="field"><div class="field-label">Outlook category</div><div class="field-val" style="color:#0c447c;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;font-weight:500;">${esc(p.outlookCategory||'(not set)')}</div></div>
-      <div class="field${editMode?' editable':''}"><div class="field-label">Architect</div>${gatedField('architect',p.architect)}</div>
-      <div class="field${editMode?' editable':''}"><div class="field-label">Main contractor</div>${gatedField('contractor',p.contractor)}</div>
       <div class="field"><div class="field-label">Sales rep</div><select class="field-select" onchange="updateField(${p.id},'salesRep',this.value)">${salesReps.map(r=>`<option${r.name===p.salesRep?' selected':''}>${esc(r.name)}</option>`).join('')}</select></div>
       <div class="field"><div class="field-label">Follow-up date${fuOD?' <span style="color:#a32d2d;font-weight:600;">· overdue</span>':''}</div>${textField('followUp',fu,'date',fuOD?'color:#a32d2d;':'')}</div>
       ${p.stage==='quoting'?`<div class="field"><div class="field-label">Quote due${(p.quoteDueDate&&p.quoteDueDate<today())?' <span style="color:#a32d2d;font-weight:600;">· overdue</span>':''}</div>${textField('quoteDueDate',p.quoteDueDate,'date',(p.quoteDueDate&&p.quoteDueDate<today())?'color:#a32d2d;':'')}</div>`:''}
@@ -4216,16 +4367,16 @@ function renderTab(){
       </div>
       <div class="field"><div class="field-label">Last updated</div><div class="field-val" style="color:#777;font-weight:400;">${p.lastUpdated?fmtDate(p.lastUpdated):'—'}</div></div>
     </div>
+    <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Architects</div><div>${archs}</div></div>
     <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Main contractors</div><div>${mcs}</div></div>
     <div style="margin-top:14px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Sub-contractors</div><div>${subs}</div></div>
     <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Project type</div>${renderProjectTypeChips(p)}</div>
     <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Products required</div>${renderProductChips(p)}</div>
     <div style="margin-top:16px;"><div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:8px;">Quick actions</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      <button class="btn btn-sm" onclick="alert('Searches Outlook for emails matching this project.')">Check emails in Outlook</button>
       <button class="btn btn-sm" onclick="alert('Claude searches the register for possible duplicates of: '+${JSON.stringify(p.name)})">Check for duplicates</button>
-      <button class="btn btn-sm" onclick="showReminderModal(null)">Set reminder</button>
-      <button class="btn btn-sm" onclick="alert('Creates an Outlook calendar event for this project follow-up.')">Add to calendar</button>
+      <button class="btn btn-sm" onclick="setProjectReminder()">Set project reminder</button>
+      <button class="btn btn-sm" onclick="renameCurrentProject()">Rename project</button>
     </div></div>`;
 
   } else if(currentTab==='contacts'){
@@ -4278,13 +4429,21 @@ let currentTlType='note';
 /* Phase 8v-2x: timeline company filter state — 'all' or a company name.
    Survives tab switches but resets when the user navigates to a new project. */
 let currentTimelineCompany='all';
+/* Phase 8v-3a: type filter (all / email / note / call / meeting / reminder). */
+let currentTimelineType='all';
 function setTlType(type,el){
   currentTlType=type;
-  document.querySelectorAll('.tl-type').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
+  /* Phase 8v-3a: re-render so the date/time inputs appear/disappear based
+     on the chosen entry type. Don't mutate buttons directly — the render
+     restores them. */
+  renderTab();
 }
 function setTimelineCompany(co){
   currentTimelineCompany=co||'all';
+  renderTab();
+}
+function setTimelineType(t){
+  currentTimelineType=t||'all';
   renderTab();
 }
 
@@ -4300,6 +4459,38 @@ function addTimelineItem(){
   if(currentTlType==='reminder'){
     showReminderModal(null,text,allocCompany||null);
     input.value='';
+    return;
+  }
+  /* Phase 8v-3a: call inbound/outbound and meeting entries. Date/time
+     captured from the inline picker (defaults to now). Meetings also
+     carry a duration in minutes. */
+  if(currentTlType==='call-in'||currentTlType==='call-out'||currentTlType==='meeting'){
+    const dEl=document.getElementById('tl-entry-date');
+    const tEl=document.getElementById('tl-entry-time');
+    const date=dEl&&dEl.value?dEl.value:today();
+    const time=tEl&&tEl.value?tEl.value:'';
+    const isCall=currentTlType==='call-in'||currentTlType==='call-out';
+    const subType=currentTlType==='call-in'?'in':(currentTlType==='call-out'?'out':null);
+    const entry={
+      id:uid(),
+      type:isCall?'call':'meeting',
+      date:date,
+      time:time,
+      author:ME,
+      action:isCall?(currentTlType==='call-in'?'logged inbound call':'logged outbound call'):'logged a meeting',
+      text:text
+    };
+    if(subType)entry.subType=subType;
+    if(currentTlType==='meeting'){
+      const durEl=document.getElementById('tl-entry-duration');
+      const dur=durEl&&durEl.value?parseInt(durEl.value,10):60;
+      if(!isNaN(dur))entry.duration=dur;
+    }
+    if(allocCompany)entry.company=allocCompany;
+    currentProject.timeline.unshift(entry);
+    input.value='';
+    persistProjects();
+    renderTab();
     return;
   }
   const entry={id:uid(),type:'note',date:today(),author:ME,action:'added a note',text:text};
@@ -4374,11 +4565,13 @@ function _renderEmailRow(p,e,indent){
   const expanded=emailTabState.expandedRows.has(e.id);
   const rem=_findReminderForEmail(p,e.id);
   const flagFilled=!!rem;
-  const flagBtn='<button onclick="event.stopPropagation();_emailFlagFollowUp('+idAttr+')" title="'+(flagFilled?'Already flagged · click to unflag':'Flag for follow-up — creates a CRM reminder + Outlook calendar event')+'" style="border:0;background:none;cursor:pointer;padding:2px 4px;font-size:14px;color:'+(flagFilled?'#a87000':'#bbb')+';flex-shrink:0;">'+(flagFilled?'⚑':'⚐')+'</button>';
-  const expandBtn='<button onclick="event.stopPropagation();toggleEmailRow('+idAttr+')" title="Show/hide details" style="border:0;background:none;cursor:pointer;padding:2px 4px;color:#888;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transform:rotate('+(expanded?'180':'0')+'deg);transition:transform 0.15s;"><path d="M4 6l4 4 4-4"/></svg></button>';
+  const flagBtn='<button onclick="event.stopPropagation();_emailFlagFollowUp('+idAttr+')" title="'+(flagFilled?'Already flagged · click to unflag':'Flag for follow-up — creates a CRM reminder + Outlook calendar event')+'" style="border:0;background:none;cursor:pointer;padding:2px 4px;font-size:16px;color:'+(flagFilled?'#a87000':'#bbb')+';flex-shrink:0;">'+(flagFilled?'⚑':'⚐')+'</button>';
+  /* Phase 8v-3a: chevron moved to the left, larger size (18×18 vs 12×12). */
+  const expandBtn='<button onclick="event.stopPropagation();toggleEmailRow('+idAttr+')" title="Show/hide details" style="border:1px solid #d3dce6;background:#fff;cursor:pointer;padding:4px;color:#0c447c;flex-shrink:0;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate('+(expanded?'180':'0')+'deg);transition:transform 0.15s;"><path d="M4 6l4 4 4-4"/></svg></button>';
   const rowBg=e.isOutbound?'#f7faff':'#fff';
   const compactRow=
     '<div style="padding:6px 10px;display:flex;gap:8px;align-items:center;background:'+rowBg+';">'
+    +expandBtn
     +'<div style="font-size:10px;color:#999;min-width:60px;flex-shrink:0;">'+dateLbl+'</div>'
     +'<div style="min-width:0;flex:1;font-size:12px;color:#222;">'
       +'<span style="font-weight:500;">'+author+'</span>'
@@ -4386,23 +4579,27 @@ function _renderEmailRow(p,e,indent){
       +co
       +' · <span style="color:#555;">'+subj+'</span>'
     +'</div>'
-    +'<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+flagBtn+expandBtn+olLink+'</div>'
+    +'<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+flagBtn+olLink+'</div>'
     +'</div>';
   let detailsRow='';
   if(expanded){
     const toLine=(e.to&&e.to.length)?'<div><strong>To:</strong> '+esc((e.to||[]).join(', '))+'</div>':'';
     const ccLine=(e.cc&&e.cc.length)?'<div><strong>Cc:</strong> '+esc((e.cc||[]).join(', '))+'</div>':'';
     const fromLine='<div><strong>From:</strong> '+esc(e.fromEmail||e.from||'?')+'</div>';
-    const preview=e.points&&e.points[0]?esc(String(e.points[0]).substring(0,400)):'(no preview)';
+    /* Phase 8v-3a: longer preview cap — was 400, now 1200 chars (Graph
+       bodyPreview is up to ~250 chars, so this comfortably shows the lot
+       and leaves room if Graph ever returns more). */
+    const previewText=e.points&&e.points[0]?String(e.points[0]).substring(0,1200):'(no preview)';
+    const preview=esc(previewText).replace(/\n/g,'<br>');
     const cats=e.categories&&e.categories.length?'<div><strong>Outlook tags:</strong> '+esc((e.categories||[]).join(' · '))+'</div>':'';
     const conv=e.conversationId?'<div><strong>Thread:</strong> '+esc(e.conversationId.substring(0,40))+(e.conversationId.length>40?'…':'')+'</div>':'';
     const att=e.hasAttachments?'<div><strong>Attachments:</strong> yes (open in Outlook to download)</div>':'';
     const reminderLine=rem?'<div style="color:#a87000;"><strong>⚑ Follow-up reminder set:</strong> '+esc(fmtDate(rem.date)||rem.date)+(rem.notes?' — '+esc(rem.notes):'')+'</div>':'';
     detailsRow=
-      '<div style="padding:8px 10px 10px 70px;background:'+(e.isOutbound?'#f0f6ff':'#fafaf7')+';border-top:1px solid #f0f0eb;font-size:11px;color:#555;line-height:1.55;">'
+      '<div style="padding:10px 12px 12px 42px;background:'+(e.isOutbound?'#f0f6ff':'#fafaf7')+';border-top:1px solid #f0f0eb;font-size:12px;color:#555;line-height:1.6;">'
       +fromLine+toLine+ccLine
-      +'<div style="margin-top:6px;padding-top:6px;border-top:1px solid #ebebe6;color:#666;"><strong>Preview:</strong> '+preview+'</div>'
-      +(cats||conv||att||reminderLine?'<div style="margin-top:6px;padding-top:6px;border-top:1px solid #ebebe6;color:#777;font-size:10px;">'+cats+conv+att+reminderLine+'</div>':'')
+      +'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #ebebe6;color:#444;"><strong>Preview:</strong><br>'+preview+'</div>'
+      +(cats||conv||att||reminderLine?'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #ebebe6;color:#777;font-size:11px;">'+cats+conv+att+reminderLine+'</div>':'')
       +'</div>';
   }
   return '<div data-email-id="'+esc(e.id||'')+'" style="border-bottom:1px solid #f5f5f3;'+(indent?'margin-left:'+(indent*16)+'px;':'')+'">'+compactRow+detailsRow+'</div>';
@@ -4823,6 +5020,9 @@ let pendingReminderCompany=null;
    reference and "push to Outlook calendar" intent through the modal. */
 let pendingReminderEmailId=null;
 let pendingReminderPushToCalendar=false;
+/* Phase 8v-3a: project-level reminders use this to push a calendar event
+   linked to the project page (not a specific email). */
+let pendingReminderProjectId=null;
 function showReminderModal(rid,prefillText,prefillCompany){
   editingRemId=rid; remModalDone=false;
   pendingReminderCompany=prefillCompany||null;
@@ -4875,24 +5075,39 @@ function saveReminder(){
     const tlEntry={id:uid(),type:'reminder',date:date||today(),author:ME,action:'set a reminder',remText:text||'Follow up',remNotes:notes,done:remModalDone,remId:newId};
     if(pendingReminderCompany)tlEntry.company=pendingReminderCompany;
     currentProject.timeline.unshift(tlEntry);
-    /* Phase 8v-2z: if this reminder originated from the email follow-up flag,
-       push to Outlook calendar via Graph. Async; failure surfaces via alert. */
-    if(pendingReminderPushToCalendar&&pendingReminderEmailId){
-      const email=(currentProject.emails||[]).find(function(e){return e.id===pendingReminderEmailId;});
-      if(email){
-        /* Compute due ISO at the email-flag click time of day, on the chosen date.
-           If user changed the date, use that; if they kept tomorrow, use tomorrow same time. */
-        const now=new Date();
-        const due=new Date(date+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
-        const dueIso=due.toISOString();
-        const proj=currentProject;
-        _createOutlookFollowUpEvent(proj,email,dueIso,{note:notes||''}).then(function(evt){
-          /* Save the Graph event id on the reminder for later cancel. */
+    /* Phase 8v-2z + 8v-3a: calendar push for both email follow-ups and
+       project-level reminders. */
+    if(pendingReminderPushToCalendar){
+      const now=new Date();
+      const due=new Date(date+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
+      const dueIso=due.toISOString();
+      const proj=currentProject;
+      let evtPromise;
+      if(pendingReminderEmailId){
+        const email=(currentProject.emails||[]).find(function(e){return e.id===pendingReminderEmailId;});
+        if(email){
+          evtPromise=_createOutlookFollowUpEvent(proj,email,dueIso,{note:notes||''});
+        }
+      }else if(pendingReminderProjectId){
+        /* Project-level reminder: synthesise a "pseudo-email" object
+           carrying the project deep-link as its webLink so the existing
+           helper can produce a body with a clickable link back to the CRM. */
+        const projUrl=_buildProjectDeepLink(proj.id);
+        const pseudoEmail={
+          subject:text||'Project reminder — '+(proj.name||''),
+          fromEmail:'',
+          from:'',
+          webLink:projUrl
+        };
+        evtPromise=_createOutlookFollowUpEvent(proj,pseudoEmail,dueIso,{note:notes||''});
+      }
+      if(evtPromise){
+        evtPromise.then(function(evt){
           const r=proj.reminders.find(function(x){return x.id===newId;});
           if(r){r.calendarEventId=evt.id;r.calendarEventWebLink=evt.webLink||'';try{persistProjects();}catch(e){}}
-          try{console.log('[Phase 8v-2z] Calendar event created:',evt.id);}catch(_){}
+          try{console.log('[Phase 8v-2z/3a] Calendar event created:',evt.id);}catch(_){}
         }).catch(function(err){
-          try{console.warn('[Phase 8v-2z] Calendar push failed',err);}catch(_){}
+          try{console.warn('[Phase 8v-2z/3a] Calendar push failed',err);}catch(_){}
           alert('Reminder saved in CRM, but Outlook calendar push failed:\n\n'+(err.message||err)+'\n\nThe CRM reminder is intact. Check the Calendars.ReadWrite permission in Azure.');
         });
       }
@@ -4901,6 +5116,7 @@ function saveReminder(){
   pendingReminderCompany=null;
   pendingReminderEmailId=null;
   pendingReminderPushToCalendar=false;
+  pendingReminderProjectId=null;
   persistProjects();
   hideReminderModal();
   renderTab();
@@ -5783,7 +5999,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-07v · emails-redesign+follow-up'
+      build:'2026-05-07w · overview+timeline+quickactions'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -5948,7 +6164,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-07v · emails-redesign+follow-up';
+const BACKUP_BUILD='2026-05-07w · overview+timeline+quickactions';
 function exportBackup(){
   const payload={
     _meta:{
@@ -7525,7 +7741,7 @@ function cancelPendingMerge(){
 applyAdminVisibility();
 rebuildViewAsDropdown();
 filterProjects('');
-try{console.log('%cSPP prototype build 2026-05-07v · emails-redesign+follow-up','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-07w · overview+timeline+quickactions','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
