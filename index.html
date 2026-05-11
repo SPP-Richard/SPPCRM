@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08u · admin-split-modals</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08v · tag-add-delete</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1195,6 +1195,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="tagmgr-toolbar">
         <input type="text" class="tagmgr-search" id="tagmgr-search" placeholder="Search tags…" oninput="renderTagManagerList()"/>
         <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="tagmgr-show-retired" onchange="renderTagManagerList()"/> Show retired</label>
+      </div>
+      <!-- Phase 8v-3z: add new tag inline. Created as a promoted user tag
+           (Verified, admin-added) so autocomplete picks it up immediately. -->
+      <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#f5f8fb;border:1px solid #d3dce6;border-radius:6px;margin-bottom:10px;">
+        <span style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Add new</span>
+        <input type="text" id="tagmgr-new-name" placeholder="New tag name (e.g. Acoustic doors)" style="flex:1;padding:6px 10px;border:1px solid #d3dce6;border-radius:5px;font-size:13px;font-family:inherit;" onkeydown="if(event.key==='Enter'){event.preventDefault();addTagFromManager();}"/>
+        <button class="btn btn-sm btn-primary" onclick="addTagFromManager()">Add tag</button>
       </div>
       <div class="tagmgr-list" id="tagmgr-list"></div>
     </div>
@@ -7671,7 +7678,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08u · admin-split-modals'
+      build:'2026-05-08v · tag-add-delete'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7836,7 +7843,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08u · admin-split-modals';
+const BACKUP_BUILD='2026-05-08v · tag-add-delete';
 function exportBackup(){
   const payload={
     _meta:{
@@ -10001,16 +10008,109 @@ function renderTagManagerList(){
     if(r.status==='user')act.push(`<button onclick="promoteTag(${nq},${qp})" title="Mark as verified — autocomplete will render it as a solid chip">Promote</button>`);
     if(!isSeeded&&!r.retired)act.push(`<button onclick="renameTag(${nq},${qp})" title="Rename and cascade across all projects using this tag">Rename</button>`);
     if(!r.retired)act.push(`<button onclick="openMergePicker(${nq},${qp})" title="Merge this tag into another — projects using it will get the target tag instead">Merge</button>`);
-    /* Retire/Restore is now available for ALL tags (seeded + user-created).
+    /* Retire/Restore is available for ALL tags (seeded + user-created).
        Seeded retires record a marker; Restore on a seeded tag deletes the
        marker and reactivates the seed. */
     act.push(r.retired
       ?`<button onclick="confirmRestoreTag(${nq},${qp})" title="Reactivate this tag so it shows in autocomplete again">Restore</button>`
       :`<button onclick="confirmRetireTag(${nq},${qp})" title="Hide from autocomplete — existing usages are left alone">Retire</button>`);
+    /* Phase 8v-3z: Delete is only for user-created tags. Seeded tags can't
+       be deleted (the verified-tag list is hard-coded); use Retire instead. */
+    if(!isSeeded)act.push(`<button onclick="confirmDeleteTag(${nq},${qp})" title="Permanently remove this tag — cascades across all projects using it" style="color:#a62929;">Delete</button>`);
     return `<div class="tagmgr-row"><div class="tm-n">${esc(r.name)}</div><div class="tm-status ${statusCls}">${statusLabel}</div><div class="tm-use">${r.use} project${r.use===1?'':'s'}</div><div class="tm-act">${act.join('')}</div></div>`;
   }).join('');
 }
 function _findInPool(name,cfg){const k=(name||'').toLowerCase();return cfg.userList.find(t=>t.name.toLowerCase()===k);}
+/* Phase 8v-3z: add a brand-new tag from the Tag Manager. Creates the entry
+   as `promoted` so it's treated as a Verified (admin-added) tag — that way
+   autocomplete picks it up straight away with the solid-chip styling. */
+function addTagFromManager(){
+  const inp=document.getElementById('tagmgr-new-name');
+  if(!inp)return;
+  const raw=String(inp.value||'').trim();
+  if(!raw){inp.focus();return;}
+  const cleaned=raw.replace(/\s+/g,' ');
+  const cfg=_tagmgrPoolConfig(_tagmgrPool);
+  const lower=cleaned.toLowerCase();
+  /* Duplicate against verified-seeded list (case-insensitive). If the seeded
+     version is retired (has a marker), reactivate it instead of erroring. */
+  const seededHit=cfg.verified.find(function(v){return v.toLowerCase()===lower;});
+  if(seededHit){
+    const marker=cfg.userList.find(function(t){return t.seeded&&t.retired&&t.name.toLowerCase()===lower;});
+    if(marker){
+      const idx=cfg.userList.indexOf(marker);
+      if(idx>=0)cfg.userList.splice(idx,1);
+      cfg.persist();
+      inp.value='';
+      renderTagManagerList();
+      _showTagMgrBanner('"'+seededHit+'" is a verified seed — restored from retirement.');
+      return;
+    }
+    inp.focus();inp.select();
+    _showTagMgrBanner('"'+seededHit+'" is already a verified '+cfg.label+'.');
+    return;
+  }
+  /* Duplicate against user-created (active or retired). If retired, reactivate. */
+  const existing=cfg.userList.find(function(t){return !t.seeded&&t.name.toLowerCase()===lower;});
+  if(existing){
+    if(existing.retired){
+      existing.retired=false;
+      existing.promoted=true;
+      cfg.persist();
+      inp.value='';
+      renderTagManagerList();
+      _showTagMgrBanner('"'+existing.name+'" was retired — reactivated.');
+      return;
+    }
+    inp.focus();inp.select();
+    _showTagMgrBanner('"'+existing.name+'" already exists.');
+    return;
+  }
+  cfg.userList.push({name:cleaned,createdBy:ME,createdAt:today(),retired:false,promoted:true});
+  cfg.persist();
+  inp.value='';
+  renderTagManagerList();
+  _showTagMgrBanner('Added "'+cleaned+'" as a verified '+cfg.label+'.');
+}
+/* Phase 8v-3z: hard-delete a USER-CREATED tag. Removes the userList entry
+   AND strips the tag from every project that uses it. Seeded tags can't be
+   hard-deleted — admin should retire them instead. */
+function confirmDeleteTag(name,pool){
+  const cfg=_tagmgrPoolConfig(pool||_tagmgrPool);
+  const t=_findInPool(name,cfg);
+  if(!t||t.seeded){
+    alert('Seeded tags can\'t be deleted — use Retire instead so they leave existing project records intact.');
+    return;
+  }
+  const use=cfg.countUsage(name);
+  const usageMsg=use===0
+    ?'No projects currently use it.'
+    :use+' project'+(use===1?'':'s')+' will have this tag stripped from their record.';
+  const body='Deleting "'+name+'" permanently removes it from autocomplete AND from every project that uses it. This cannot be undone. '+usageMsg+' If you only want it hidden, use Retire instead.';
+  showConfirmModal('Delete "'+name+'"?',body,'Yes, delete',function(){
+    deleteTag(name,pool);
+    _showTagMgrBanner('Deleted "'+name+'" and stripped it from '+use+' project'+(use===1?'':'s')+'.');
+  });
+}
+function deleteTag(name,pool){
+  const cfg=_tagmgrPoolConfig(pool||_tagmgrPool);
+  const t=_findInPool(name,cfg);
+  if(!t||t.seeded)return;
+  const k=name.toLowerCase();
+  /* Strip from every project that uses it. */
+  projects.forEach(function(p){
+    const arr=p[cfg.projectField];
+    if(!Array.isArray(arr))return;
+    p[cfg.projectField]=arr.filter(function(x){return x.toLowerCase()!==k;});
+  });
+  /* Remove the userList entry. */
+  const idx=cfg.userList.indexOf(t);
+  if(idx>=0)cfg.userList.splice(idx,1);
+  cfg.persist();
+  persistProjects();
+  renderTagManagerList();
+  if(currentProject&&typeof renderTab==='function')try{renderTab();}catch(e){}
+}
 function promoteTag(name,pool){
   const cfg=_tagmgrPoolConfig(pool||_tagmgrPool);
   const t=_findInPool(name,cfg);if(!t)return;
@@ -10250,7 +10350,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08u · admin-split-modals','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08v · tag-add-delete','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
