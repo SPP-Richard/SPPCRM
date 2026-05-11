@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08y · thread-move-and-name-match-fix</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08z · generic-tokens-editable</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1704,7 +1704,41 @@ const DEFAULT_SCAN_SETTINGS={
   ignoreDomains:[],
   /* Date range for the first big back-scan (in days). Subsequent scans
      only fetch new emails since the last scan. */
-  firstScanDays:365
+  firstScanDays:365,
+  /* Phase 8v-3ad: generic words the project-name matcher should NOT use to
+     auto-link an email. These are tokens that show up in many unrelated
+     project names AND in many email subjects — "school", "primary",
+     "drawing", UK county names, etc. A single-token match on any of these
+     is too noisy to trust. The list is exposed in scan settings so you can
+     tune it as more false positives surface. */
+  genericNameTokens:[
+    /* Building types */
+    'school','schools','primary','secondary','college','university','academy',
+    'hospital','surgery','clinic','office','offices','building','buildings',
+    'centre','center','hall','halls','suite','suites','complex','development',
+    'apartments','residence','residences','residential','commercial','industrial',
+    /* Room/space */
+    'room','rooms','space','spaces','floor','floors','ground','upper','lower',
+    'rehearsal','classroom','classrooms','library','gym','reception',
+    /* Descriptors */
+    'large','small','medium','additional','new','existing','refurbishment',
+    'refurb','extension','redevelopment','phase','works','project','projects',
+    /* Construction terms */
+    'drawing','drawings','spec','specification','specifications','sample','samples',
+    'section','sections','detail','details','elevation','elevations','plan','plans',
+    'cladding','lining','linings','panel','panels','door','doors','window','windows',
+    'finish','finishes','install','installation','supply','fitting','fittings',
+    'acoustic','acoustics',
+    /* Sales/admin */
+    'cover','response','query','enquiry','enquiries','quote','quotes','quotation',
+    'order','orders','invoice','update','updates','submission','submissions',
+    /* UK regions/counties (single-token matches on these are noise) */
+    'cornwall','devon','somerset','dorset','kent','sussex','surrey','essex',
+    'suffolk','norfolk','yorkshire','lancashire','london','manchester','bristol',
+    'birmingham','liverpool','leeds','sheffield','glasgow','edinburgh','cardiff',
+    /* Compass / direction */
+    'north','south','east','west','central','site','sites'
+  ]
 };
 let scanSettings=JSON.parse(JSON.stringify(DEFAULT_SCAN_SETTINGS));
 try{
@@ -1771,6 +1805,9 @@ function renderScanSettingsPanel(){
     +listEditor('New-project keywords','newProjectKeywords',
       'Words in the subject line that suggest a new project enquiry. Used to surface unmatched emails as new-project candidates for review.',
       'e.g. tender')
+    +listEditor('Generic words (ignored by name matcher)','genericNameTokens',
+      'Words that should NOT trigger an auto-link by themselves. The matcher uses project-name tokens to spot the right project — but words like "school", "drawing", or "cornwall" appear in many unrelated projects AND email subjects, so a single match on those is noise. Add a word here to silence it. Remove a word if you find it\'s blocking a legit match. Tokens with digits (e.g. "CT24085") are always treated as distinctive regardless of this list.',
+      'e.g. drawing')
     +listEditor('Ignore senders (prefixes)','ignoreSenders',
       'Sender email prefixes to silently skip. The scan matches if the sender starts with any of these.',
       'e.g. noreply@')
@@ -3363,42 +3400,19 @@ function _isEmailAlreadyLinked(emailId){
    existing project names/addresses. Without this, "the", "and", "street"
    etc. would create constant false-positive overlap hints. */
 const _STOPWORDS=new Set(['the','a','an','and','or','of','for','to','in','on','at','by','with','from','re','fwd','street','road','avenue','lane','way','close','court','place','drive','square','fw','rd','st','ave','ltd','plc','limited','&']);
-/* Phase 8v-3ac: generic words that should NOT trigger a name match on their
-   own. These show up in many unrelated project names + email subjects.
-   Without this filter the matcher false-positives on "school", "primary",
-   "drawing" etc. — a real bug Richard hit where an email about St Peter's
-   RC Primary School was auto-imported into a Truro School project just
-   because both names contain "school". Kept conservative: a word is here
-   ONLY if it commonly appears in many unrelated projects/subjects. */
-const _GENERIC_NAME_TOKENS=new Set([
-  /* Building types */
-  'school','schools','primary','secondary','college','university','academy',
-  'hospital','surgery','clinic','office','offices','building','buildings',
-  'centre','center','hall','halls','suite','suites','complex','development',
-  'apartments','residence','residences','residential','commercial','industrial',
-  /* Room/space */
-  'room','rooms','space','spaces','floor','floors','ground','upper','lower',
-  'rehearsal','classroom','classrooms','library','gym','reception',
-  /* Descriptors */
-  'large','small','medium','additional','new','existing','refurbishment',
-  'refurb','extension','redevelopment','phase','works','project','projects',
-  /* Construction terms */
-  'drawing','drawings','spec','specification','specifications','sample','samples',
-  'section','sections','detail','details','elevation','elevations','plan','plans',
-  'cladding','lining','linings','panel','panels','door','doors','window','windows',
-  'finish','finishes','install','installation','supply','fitting','fittings',
-  'acoustic','acoustics',
-  /* Sales/admin */
-  'cover','response','query','enquiry','enquiries','quote','quotes','quotation',
-  'order','orders','invoice','update','updates','submission','submissions',
-  /* UK regions/counties (only when used alone — paired with another distinctive
-     token they still trigger via 2+ match path if we add one later) */
-  'cornwall','devon','somerset','dorset','kent','sussex','surrey','essex',
-  'suffolk','norfolk','yorkshire','lancashire','london','manchester','bristol',
-  'birmingham','liverpool','leeds','sheffield','glasgow','edinburgh','cardiff',
-  /* Compass / direction */
-  'north','south','east','west','central','site','sites'
-]);
+/* Phase 8v-3ad: generic-name-tokens moved to scanSettings.genericNameTokens
+   so the list is editable from Scan settings. Use _getGenericNameTokenSet()
+   to read the current settings (case-insensitive Set rebuilt on each call —
+   cheap, ~90 inserts, and avoids cache-invalidation bugs). */
+function _getGenericNameTokenSet(){
+  const arr=(scanSettings&&Array.isArray(scanSettings.genericNameTokens))?scanSettings.genericNameTokens:[];
+  const s=new Set();
+  for(let i=0;i<arr.length;i++){
+    const v=String(arr[i]||'').toLowerCase().trim();
+    if(v)s.add(v);
+  }
+  return s;
+}
 function _tokenise(s){
   if(!s)return [];
   return String(s).toLowerCase().split(/[^a-z0-9]+/).filter(function(w){
@@ -3434,40 +3448,40 @@ function _findRefMatchProjects(email){
   }
   return matched;
 }
-/* Phase 8v-3ac: a token is "distinctive" for the name matcher if it's
+/* Phase 8v-3ac/3ad: a token is "distinctive" for the name matcher if it's
    long enough to identify a specific project AND isn't in the generic-words
-   list. We also treat any token containing a digit as distinctive (project
-   codes like CT24085 are highly specific). */
-function _isDistinctiveNameToken(t){
+   list (now sourced from scanSettings.genericNameTokens). Tokens containing
+   a digit are always distinctive — project codes like CT24085 are highly
+   specific by construction. */
+function _isDistinctiveNameToken(t,genericSet){
   if(!t||t.length<5)return false;
   if(/\d/.test(t))return true;             /* digit-bearing = always distinctive */
-  if(_GENERIC_NAME_TOKENS.has(t))return false;
+  if(genericSet&&genericSet.has(t))return false;
   return true;
 }
 function _findNameMatchProjects(email){
   /* Returns ALL projects whose distinctive name tokens appear in the
-     subject. Two structural changes vs the earlier version:
+     subject. Two structural rules:
 
      (1) Match is EXACT token, not substring. Old code did
          subj.indexOf('school')>=0 which fired on "preschool", "schools",
          and any tokenisation-foreign substring. We compare against the
          tokenised subject set instead.
      (2) Distinctive-token filter (_isDistinctiveNameToken) drops generic
-         words like "school", "primary", "drawing" — these appear in many
-         unrelated projects so single-token matches on them are noise.
+         words ("school", "primary", "drawing", county names, etc.) which
+         the user can tune via Scan settings → Generic words.
 
      Net effect: a name match requires at least one shared token that's
      genuinely identifying. "Riverside drawings" still matches "Riverside
-     Apartments" because riverside is 9 chars and not generic. A subject
-     mentioning "Primary School" no longer matches every project with
-     "School" in its name. */
+     Apartments" because riverside is 9 chars and not generic. */
   if(!email||!email.subject)return [];
   const subjTokens=new Set(_tokenise(email.subject));
   if(!subjTokens.size)return [];
+  const genericSet=_getGenericNameTokenSet();
   const matched=[];
   for(let i=0;i<projects.length;i++){
     const p=projects[i];
-    const tokens=_tokenise(p.name||'').filter(_isDistinctiveNameToken);
+    const tokens=_tokenise(p.name||'').filter(function(t){return _isDistinctiveNameToken(t,genericSet);});
     if(!tokens.length)continue;
     if(tokens.some(function(t){return subjTokens.has(t);}))matched.push(p);
   }
@@ -7934,7 +7948,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08y · thread-move-and-name-match-fix'
+      build:'2026-05-08z · generic-tokens-editable'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8099,7 +8113,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08y · thread-move-and-name-match-fix';
+const BACKUP_BUILD='2026-05-08z · generic-tokens-editable';
 function exportBackup(){
   const payload={
     _meta:{
@@ -10606,7 +10620,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08y · thread-move-and-name-match-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08z · generic-tokens-editable','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
