@@ -184,6 +184,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cco-fact-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px;}
 .cco-fact{background:#fff;border:1px solid #e8e8e4;border-radius:8px;padding:12px 14px;}
 .cco-fact-lbl{font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;}
+/* Phase 8v-3r: inline-editable fact cells (Main phone, Address). Looks like
+   a static value by default; surfaces a light border on hover and a solid
+   blue border on focus so the editability is discoverable without cluttering
+   the read state. Save fires on blur via the field's onchange handler. */
+.cco-fact-inp{font-size:13px;font-weight:500;color:#222;background:transparent;border:1px solid transparent;border-radius:5px;padding:4px 6px;margin:-4px -6px;font-family:inherit;width:calc(100% + 12px);box-sizing:border-box;transition:border-color 0.12s,background 0.12s;}
+.cco-fact-inp:hover:not(:focus){border-color:#d3dce6;background:#fafcff;}
+.cco-fact-inp:focus{outline:none;border-color:#185fa5;background:#fff;}
+.cco-fact-inp.empty,.cco-fact-inp::placeholder{color:#aaa;font-weight:400;}
+.cco-fact-inp-multi{min-height:48px;resize:vertical;line-height:1.4;}
 .cco-fact-val{font-size:13px;color:#1a1a18;}
 .cco-fact-val.muted{color:#aaa;font-style:italic;}
 .cco-proj-row{display:grid;grid-template-columns:2fr 1fr 1fr 110px;gap:12px;align-items:center;padding:10px 12px;border:1px solid #e8e8e4;border-radius:8px;background:#fff;cursor:pointer;margin-bottom:6px;transition:all 0.15s;}
@@ -695,7 +704,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08m · company-address-mainphone</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08n · company-inline-edit-cleanup</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -884,7 +893,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
             <div class="pname-lg" id="co-name">—</div>
             <div class="paddr-sm" id="co-type-label">—</div>
             <div class="cco-action-row">
-              <button class="cco-action-btn" onclick="findCompanyDetails()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/></svg>Find details</button>
+              <!-- Phase 8v-3r: Find-details button removed — address + main
+                   phone are now populated automatically when you run Find
+                   details on any contact card, and the Address / Main phone
+                   fact cells below are directly editable. -->
               <button class="cco-action-btn" onclick="saveCompanyToOutlook()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Save to Outlook</button>
             </div>
           </div>
@@ -7565,7 +7577,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08m · company-address-mainphone'
+      build:'2026-05-08n · company-inline-edit-cleanup'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7730,7 +7742,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08m · company-address-mainphone';
+const BACKUP_BUILD='2026-05-08n · company-inline-edit-cleanup';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8261,10 +8273,10 @@ function renderCoDetailsSection(co){
         <div class="cco-fact"><div class="cco-fact-lbl">Type</div><div class="cco-fact-val">${typeLabel(co.type)}</div></div>
         <div class="cco-fact"><div class="cco-fact-lbl">Projects</div><div class="cco-fact-val">${co.projects.length} (${stageCounts.quoting} quoting, ${stageCounts.spec} spec, ${stageCounts.won} won, ${stageCounts.lost} lost)</div></div>
         <div class="cco-fact"><div class="cco-fact-lbl">Contacts on file</div><div class="cco-fact-val">${co.contacts.length}</div></div>
-        <div class="cco-fact"><div class="cco-fact-lbl">Main phone</div><div class="cco-fact-val${mainPhone?'':' muted'}">${mainPhone?esc(mainPhone[0]):'Not yet known'}</div></div>
+        <div class="cco-fact"><div class="cco-fact-lbl">Main phone</div><input id="cco-mainphone-inp" class="cco-fact-inp" type="text" value="${esc(co.mainPhone||(mainPhone?mainPhone[0]:''))}" placeholder="Not yet known" onchange="saveCompanyMainPhone(this.value)" title="Switchboard / general office number. Edit and tab away to save."></div>
         <div class="cco-fact"><div class="cco-fact-lbl">Email domain</div><div class="cco-fact-val${mainDomain?'':' muted'}">${mainDomain?'@'+esc(mainDomain[0]):'Not yet known'}</div></div>
         <div class="cco-fact"><div class="cco-fact-lbl">Last activity</div><div class="cco-fact-val${lastActivity?'':' muted'}">${lastActivity?esc(fmtDate(lastActivity.date))+' – '+esc(lastActivity.title||lastActivity.type||'entry'):'No recent activity'}</div></div>
-        <div class="cco-fact"><div class="cco-fact-lbl">Address</div><div class="cco-fact-val muted">Not yet captured</div></div>
+        <div class="cco-fact"><div class="cco-fact-lbl">Address</div><textarea id="cco-address-inp" class="cco-fact-inp cco-fact-inp-multi" placeholder="Not yet captured" onchange="saveCompanyAddress(this.value)" title="Edit and tab away to save.">${esc(co.address||'')}</textarea></div>
       </div>
     </div>
     <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:16px 18px;">
@@ -8294,20 +8306,8 @@ function renderCoDetailsSection(co){
         <button class="cco-note-save-btn" onclick="saveCompanyBTCode(document.getElementById('cco-btcode-inp').value)">Save code</button>
         <span style="font-size:11px;color:#888;">Used to link back to the customer record in Epicor BisTrack. Permanent once set.</span>
       </div>
-      <!-- Phase 8v-3q: company-level address + main switchboard phone.
-           Populated either by typing here or via the contact Find-details
-           signature scan. -->
-      <div class="cco-fact-lbl" style="margin-top:18px;margin-bottom:6px;">Address</div>
-      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-        <textarea id="cco-address-inp" class="cco-inp-select" style="max-width:360px;min-width:260px;min-height:64px;font-family:inherit;line-height:1.4;" placeholder="Street, town, postcode" oninput="this.dataset.dirty='1'">${esc(co.address||'')}</textarea>
-        <button class="cco-note-save-btn" onclick="saveCompanyAddress(document.getElementById('cco-address-inp').value)">Save address</button>
-      </div>
-      <div class="cco-fact-lbl" style="margin-top:18px;margin-bottom:6px;">Main phone</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input type="text" id="cco-mainphone-inp" class="cco-inp-select" style="max-width:200px;" value="${esc(co.mainPhone||'')}" placeholder="020 1234 5678" oninput="this.dataset.dirty='1'">
-        <button class="cco-note-save-btn" onclick="saveCompanyMainPhone(document.getElementById('cco-mainphone-inp').value)">Save phone</button>
-        <span style="font-size:11px;color:#888;">Switchboard / general office number. Direct dials live on each contact card.</span>
-      </div>
+      <!-- Phase 8v-3r: address + main phone moved into the editable fact
+           cells at the top of this section. -->
     </div>`;
 }
 
@@ -9527,7 +9527,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08m · company-address-mainphone','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08n · company-inline-edit-cleanup','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
