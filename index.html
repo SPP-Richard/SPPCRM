@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08z · generic-tokens-editable</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08aa · wipe-with-outlook-strip</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1137,6 +1137,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
           Permanently deletes all projects, sales reps (except yourself), company notes &amp; BT codes, and the BisTrack-entered markers. Tags you've created and saved settings are kept. Use this when you're ready to start using the app for real work.
         </div>
+        <!-- Phase 8v-3ae: optional Outlook category strip. Default OFF —
+             ticking reaches into Outlook to remove every SPP-CRM-* tag from
+             linked emails. Irreversible: snapshot restores projects but
+             not Outlook categories. -->
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#444;margin-bottom:10px;cursor:pointer;line-height:1.4;">
+          <input type="checkbox" id="wipe-strip-outlook" style="margin-top:2px;flex-shrink:0;"/>
+          <span>Also strip <code style="background:#fff;padding:1px 4px;border:1px solid #e6c1c1;border-radius:3px;font-size:11px;">SPP-CRM-*</code> categories from every linked email in Outlook. Non-CRM categories (like "Important") are preserved. <strong>Irreversible</strong> in Outlook — the safety snapshot can restore CRM data but not Outlook tags.</span>
+        </label>
         <button class="btn btn-sm" onclick="wipeDemoData()" style="background:#a62929;color:#fff;border-color:#8a1f1f;">Wipe demo data and start fresh</button>
       </div>
     </div>
@@ -7948,7 +7956,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08z · generic-tokens-editable'
+      build:'2026-05-08aa · wipe-with-outlook-strip'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8113,7 +8121,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08z · generic-tokens-editable';
+const BACKUP_BUILD='2026-05-08aa · wipe-with-outlook-strip';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8196,18 +8204,62 @@ function importBackup(event){
    scanState, adminSettings — these are real Richard work / preferences. */
 async function wipeDemoData(){
   const meRep=salesReps.find(r=>r.name===ME)||{name:ME||'You',email:ME_EMAIL||'',admin:true};
-  const msg='Wipe ALL demo projects ('+projects.length+'), reset sales reps to just you, clear company notes & BT codes ('+Object.keys(companyOverrides).length+' companies affected), and clear BisTrack-entered markers?\n\nUser tags and saved settings are kept.\n\nThis cannot be undone.';
-  if(!confirm(msg))return;
-  /* Take a safety snapshot first so the wipe is undoable. Awaited so the
-     snapshot lands on disk (or in localStorage) before we destroy state. */
+  /* Phase 8v-3ae: read the "strip Outlook categories" checkbox. Falls
+     back to false if the panel isn't rendered (defensive). */
+  const stripCb=document.getElementById('wipe-strip-outlook');
+  const stripOutlook=!!(stripCb&&stripCb.checked);
+  /* Gather every linked email up-front while projects[] is still populated.
+     We need the {id, categories} for each so the Graph batch knows what
+     to strip without re-fetching. */
+  let outlookTargets=[];
+  if(stripOutlook){
+    const seen=new Set();
+    projects.forEach(function(p){
+      (p.emails||[]).forEach(function(e){
+        if(!e||!e.id||seen.has(e.id))return;
+        seen.add(e.id);
+        outlookTargets.push({id:e.id,categories:_computeUpdatedCategories(e.categories||[],'')});
+      });
+    });
+  }
+  const baseMsg='Wipe ALL demo projects ('+projects.length+'), reset sales reps to just you, clear company notes & BT codes ('+Object.keys(companyOverrides).length+' companies affected), and clear BisTrack-entered markers?\n\nUser tags and saved settings are kept.';
+  const outlookMsg=stripOutlook
+    ? '\n\nALSO stripping SPP-CRM-* categories from '+outlookTargets.length+' linked email'+(outlookTargets.length===1?'':'s')+' in Outlook. Non-CRM categories are kept. This part is IRREVERSIBLE — the safety snapshot can\'t restore Outlook tags.'
+    : '\n\nOutlook categories on your linked emails will NOT be touched.';
+  if(!confirm(baseMsg+outlookMsg+'\n\nProceed?'))return;
+  /* Take a safety snapshot first so the local wipe is undoable. Awaited so
+     the snapshot lands on disk (or in localStorage) before we destroy state. */
   try{await takeSnapshot('before-wipe');}catch(e){try{console.warn('Pre-wipe snapshot failed',e);}catch(_){}}
+  /* If asked to, strip categories in Outlook BEFORE the local wipe. If the
+     Graph call fails, abort the local wipe so the user can retry with the
+     mapping intact. (Partial strip + lost mapping = orphaned tags forever.) */
+  if(stripOutlook&&outlookTargets.length){
+    let res;
+    try{res=await _patchMessageCategoriesBatch(outlookTargets);}
+    catch(e){
+      alert('Outlook category strip failed — '+(e&&e.message?e.message:String(e))+'\n\nThe CRM wipe has been aborted so you can retry without losing the email-to-project mapping. (Tip: check your Mail.ReadWrite permission in Azure.)');
+      return;
+    }
+    if(res&&res.failed>0&&res.success===0){
+      alert('Outlook category strip failed on every email ('+res.failed+'/'+outlookTargets.length+'). The CRM wipe has been aborted so you can retry.\n\nFirst error: '+((res.errors||[])[0]&&((res.errors[0].error)||('status '+res.errors[0].status))||'unknown'));
+      return;
+    }
+    if(res&&res.failed>0){
+      const cont=confirm('Outlook strip was partial: '+res.success+' succeeded, '+res.failed+' failed. The failed emails will still carry their SPP-CRM-* categories.\n\nContinue with the local wipe anyway? (Cancel to retry — your CRM data is still intact.)');
+      if(!cont)return;
+    }
+  }
+  /* Now the local wipe. */
   projects=[];
   salesReps=[Object.assign({},meRep,{admin:true})];
   companyOverrides={};
   try{localStorage.setItem('spp.bistrackEntered','{}');}catch(e){}
   bistrackEntered={};
   persistAll();
-  alert('Demo data wiped. A safety snapshot was taken first — you can revert via Manage reps → Daily snapshots if needed. The page will now reload.');
+  const closing=stripOutlook&&outlookTargets.length
+    ? 'Demo data wiped and '+outlookTargets.length+' Outlook categor'+(outlookTargets.length===1?'y':'ies')+' stripped. A safety snapshot was taken first — you can revert CRM state via Data & storage → Daily snapshots if needed (Outlook tags can\'t be restored). The page will now reload.'
+    : 'Demo data wiped. A safety snapshot was taken first — you can revert via Data & storage → Daily snapshots if needed. The page will now reload.';
+  alert(closing);
   location.reload();
 }
 /* Next-id generator for new note entries */
@@ -10620,7 +10672,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08z · generic-tokens-editable','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08aa · wipe-with-outlook-strip','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
