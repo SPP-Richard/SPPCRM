@@ -695,7 +695,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08k · companies-stats-toaction</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08l · won-lost-clean-list</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -742,7 +742,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button class="btn btn-sm btn-primary" id="scan-now-btn" onclick="runScanSinceLastRun()">Scan my inbox</button>
         <div style="font-size:12px;color:#666;flex:1;" id="scan-strip-status">Not scanned yet — run the first scan to start tracking.</div>
       </div>
-      <div class="stats-row">
+      <div class="stats-row" id="dash-stats-row">
         <div class="stat-card info" onclick="statCardNav('active',this)" style="cursor:pointer;"><div class="stat-icon info"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#185fa5" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 8h6M8 5v6"/></svg></div><div class="stat-label">Active projects</div><div class="stat-val" id="sc-active">0</div><div class="stat-sub">Spec + quoting</div></div>
         <div class="stat-card warn" onclick="statCardNav('chase',this)" style="cursor:pointer;"><div class="stat-icon warn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v2M8 11v.5"/></svg></div><div class="stat-label">New projects to chase</div><div class="stat-val" id="sc-empty">0</div><div class="stat-sub">No contacts &amp; no emails</div></div>
         <div class="stat-card danger" onclick="statCardNav('followup',this)" style="cursor:pointer;"><div class="stat-icon danger"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#a32d2d" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11v.5"/></svg></div><div class="stat-label">Projects needing follow-up</div><div class="stat-val" id="sc-rem">0</div><div class="stat-sub">Due this month or earlier</div></div>
@@ -4562,6 +4562,20 @@ function setNav(el,view){
     if((txt==='all active'&&view==='active')||(txt==='spec'&&view==='spec')||(txt==='quoting only'&&view==='quoting'))p.classList.add('active');
   });
   filterProjects(document.getElementById('search-box').value);
+  /* Phase 8v-3p: hide the dashboard chrome (scan strip, outstanding banner,
+     stat cards, To-action queue) on Won / Lost views — those screens are
+     just a project list for adding notes / inspecting closed deals. Runs
+     AFTER filterProjects so the re-renders inside updateStatCards (which
+     can re-show the outstanding-scan banner) get overridden. */
+  const isCompleted=(view==='won'||view==='lost');
+  const scanStrip=document.getElementById('scan-strip');
+  const outBanner=document.getElementById('outstanding-scan-banner');
+  const statsRow=document.getElementById('dash-stats-row');
+  const chase=document.getElementById('chase-queue');
+  if(scanStrip)scanStrip.style.display=isCompleted?'none':'';
+  if(statsRow)statsRow.style.display=isCompleted?'none':'';
+  if(chase)chase.style.display=isCompleted?'none':'';
+  if(outBanner&&isCompleted)outBanner.style.display='none';
 }
 
 function statCardNav(view,el){
@@ -7462,7 +7476,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08k · companies-stats-toaction'
+      build:'2026-05-08l · won-lost-clean-list'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7627,7 +7641,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08k · companies-stats-toaction';
+const BACKUP_BUILD='2026-05-08l · won-lost-clean-list';
 function exportBackup(){
   const payload={
     _meta:{
@@ -9376,7 +9390,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08k · companies-stats-toaction','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08l · won-lost-clean-list','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
