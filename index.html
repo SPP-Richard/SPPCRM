@@ -690,7 +690,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08h · project-list-cols-snooze-time</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08i · contact-signature-lookup</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -6451,10 +6451,189 @@ function saveContactToOutlook(){
   const c=currentContact.data;
   alert('Save to Outlook\n\n'+(c.name||'Unknown')+(c.company?' · '+c.company:'')+'\n\nIn the live system this creates a contact card in your Outlook address book with name, role, company, email and phone, tagged against the project.');
 }
-function findContactDetails(){
+/* Phase 8v-3m: strip HTML to plain text suitable for signature regex.
+   Keeps line breaks for br, p, div, li, h-tags. Uses a constructed RegExp
+   for the script-strip pattern so the source text never contains a literal
+   end-script tag (would terminate the inline script we live inside — we
+   hit that bug before). */
+function _htmlToText(html){
+  if(!html)return '';
+  let s=String(html);
+  s=s.replace(new RegExp('<script\\b[^>]*>[\\s\\S]*?<\\/script>','gi'),'');
+  s=s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,'');
+  s=s.replace(/<br\s*\/?>/gi,'\n');
+  s=s.replace(/<\/(p|div|tr|li|h[1-6])>/gi,'\n');
+  s=s.replace(/<[^>]+>/g,'');
+  s=s.replace(/&nbsp;/gi,' ');
+  s=s.replace(/&amp;/gi,'&');
+  s=s.replace(/&lt;/gi,'<');
+  s=s.replace(/&gt;/gi,'>');
+  s=s.replace(/&quot;/gi,'"');
+  s=s.replace(/&#\d+;/g,'');
+  s=s.replace(/\r/g,'');
+  s=s.replace(/[ \t]+/g,' ');
+  s=s.replace(/\n[ \t]+/g,'\n');
+  s=s.replace(/\n{3,}/g,'\n\n');
+  return s.trim();
+}
+/* Phase 8v-3m: pull signature candidates from an email body. Strategy:
+   - Locate the contact's name in the plain-text body. Each occurrence is an
+     anchor. For each anchor, scan the next 8 non-empty lines for things
+     that look like a phone or a job title.
+   - Phone heuristic: digits + spaces/parens/hyphens, 9-14 digits total
+     (covers UK landline, UK mobile, +44, +1, +33 etc.).
+   - Role heuristic: short line (< 80 chars) that isn't an email/URL/address,
+     not majority-digits, not the company name. Take the first such line per
+     anchor.
+   Returns {phones: [string], roles: [string]} (de-duplicated in insertion
+   order). Callers can pick the most frequent or first match. */
+function _extractSignatureFields(emailBody,contactName,companyName){
+  const out={phones:[],roles:[]};
+  if(!emailBody||!contactName)return out;
+  const text=_htmlToText(emailBody);
+  if(!text)return out;
+  const lines=text.split('\n').map(function(l){return l.trim();});
+  const fullLower=String(contactName).toLowerCase().trim();
+  const parts=fullLower.split(/\s+/).filter(Boolean);
+  const lastName=parts.length>1?parts[parts.length-1]:'';
+  const coLower=companyName?String(companyName).toLowerCase().trim():'';
+  /* Find anchor lines — those containing the full name (case-insensitive)
+     or a standalone last-name line (e.g. "James" sign-off). */
+  const anchors=[];
+  for(let i=0;i<lines.length;i++){
+    const lower=lines[i].toLowerCase();
+    if(!lower)continue;
+    if(lower.indexOf(fullLower)>=0){anchors.push(i);continue;}
+    if(lastName.length>2&&lower===parts[0]){anchors.push(i);continue;} /* first-name-only sign-off */
+  }
+  if(!anchors.length)return out;
+  const phoneSet=new Set();
+  const roleSet=new Set();
+  /* Phone regex: ~9-18 chars of digits/space/paren/hyphen/dot, must end in a
+     digit. Validation by digit-count is done after. */
+  const phoneRe=/(\+?[\d][\d\s().\-]{7,20}[\d])/g;
+  for(const ai of anchors){
+    let foundRole=null;
+    let scanned=0;
+    for(let i=ai+1;i<lines.length&&scanned<8;i++){
+      const line=lines[i];
+      if(!line)continue;
+      scanned++;
+      /* Phones (may be multiple on a line — capture them all). */
+      let m;
+      phoneRe.lastIndex=0;
+      while((m=phoneRe.exec(line))!==null){
+        const raw=m[1].trim();
+        const digits=raw.replace(/\D/g,'');
+        if(digits.length>=9&&digits.length<=14)phoneSet.add(raw);
+      }
+      if(foundRole)continue;
+      /* Role candidate filters */
+      if(line.length>80)continue;
+      if(line.indexOf('@')>=0)continue;
+      if(/https?:|www\./i.test(line))continue;
+      if(/^(t|tel|m|mob|mobile|p|phone|d|direct|e|email|w|web|f|fax)\s*[:.]/i.test(line))continue;
+      if(/^\d/.test(line))continue; /* street numbers / postcodes start with a digit */
+      const digitCount=(line.match(/\d/g)||[]).length;
+      if(digitCount>line.length*0.4)continue;
+      if(coLower&&line.toLowerCase()===coLower)continue; /* skip the company-name line */
+      /* Likely a job title — first plausible line wins for this anchor. */
+      foundRole=line;
+    }
+    if(foundRole)roleSet.add(foundRole);
+  }
+  out.phones=[...phoneSet];
+  out.roles=[...roleSet];
+  return out;
+}
+/* Phase 8v-3m: pick the best candidate across multiple emails. Strategy:
+   simple frequency count — the value that appears in most emails wins,
+   ties broken by first occurrence. Each input array is the set extracted
+   from one email's body. */
+function _pickMostFrequent(perEmailArrays){
+  const counts=new Map();
+  const order=[];
+  for(const arr of perEmailArrays||[]){
+    for(const v of arr){
+      if(!counts.has(v)){counts.set(v,0);order.push(v);}
+      counts.set(v,counts.get(v)+1);
+    }
+  }
+  if(!order.length)return null;
+  let best=order[0],bestN=counts.get(best);
+  for(const v of order){
+    const n=counts.get(v);
+    if(n>bestN){best=v;bestN=n;}
+  }
+  return best;
+}
+async function findContactDetails(){
   if(!currentContact)return;
   const c=currentContact.data;
-  alert('Find details\n\nIn the live system Claude searches LinkedIn, the company website and your Outlook history for "'+(c.name||'this contact')+(c.company?' at '+c.company:'')+'" and offers suggested email / phone to confirm before saving.\n\n(Wiring up to the real lookup in Phase 3.)');
+  if(!c.email){alert('No email address on file for this contact — sign-in to a Microsoft account is required, and the contact must have an email so we can look up their signature.');return;}
+  const btn=event&&event.currentTarget;
+  const origText=btn?btn.innerHTML:'';
+  if(btn){btn.disabled=true;btn.textContent='Searching…';}
+  try{
+    const token=await getAccessToken(['Mail.Read']);
+    if(!token)throw new Error('Not signed in');
+    /* Pull the most recent 10 emails FROM this address. $select keeps the
+       payload small. body is needed for signature extraction. */
+    const filter="from/emailAddress/address eq '"+String(c.email).replace(/'/g,"''")+"'";
+    const url='https://graph.microsoft.com/v1.0/me/messages?$filter='+encodeURIComponent(filter)+'&$top=10&$select=id,subject,body,bodyPreview,receivedDateTime';
+    const r=await fetch(url,{headers:{'Authorization':'Bearer '+token,'Accept':'application/json'}});
+    if(!r.ok){
+      let detail='HTTP '+r.status;
+      try{const j=await r.json();if(j.error)detail+=' — '+(j.error.message||j.error.code||'');}catch(_){}
+      throw new Error(detail);
+    }
+    const data=await r.json();
+    const messages=(data&&data.value)||[];
+    if(!messages.length){
+      alert('No emails from '+(c.name||c.email)+' in your mailbox — can\'t look up signature details. Try once you\'ve had at least one email exchange.');
+      return;
+    }
+    /* Extract from each email body, keep per-email arrays so frequency-
+       weighting works (a phone repeated across 5 emails wins over a phone
+       seen once). */
+    const perEmailPhones=[];
+    const perEmailRoles=[];
+    for(const m of messages){
+      const body=(m.body&&m.body.content)||m.bodyPreview||'';
+      const fields=_extractSignatureFields(body,c.name,c.company);
+      perEmailPhones.push(fields.phones);
+      perEmailRoles.push(fields.roles);
+    }
+    const bestPhone=_pickMostFrequent(perEmailPhones);
+    const bestRole=_pickMostFrequent(perEmailRoles);
+    if(!bestPhone&&!bestRole){
+      alert('Searched '+messages.length+' email'+(messages.length===1?'':'s')+' from '+(c.name||c.email)+' but couldn\'t find a phone number or role in their signature.\n\nIf the contact\'s name doesn\'t appear in their own emails as written, the lookup may fail. Try editing the contact name to match how they sign off.');
+      return;
+    }
+    const lines=['Found from '+messages.length+' email'+(messages.length===1?'':'s')+' signature'+(messages.length===1?'':'s')+':',''];
+    if(bestRole)lines.push('Role: '+bestRole);
+    if(bestPhone)lines.push('Phone: '+bestPhone);
+    if(c.role&&bestRole&&c.role!==bestRole)lines.push('','(current role: '+c.role+')');
+    if(c.phone&&bestPhone&&c.phone!==bestPhone)lines.push('(current phone: '+c.phone+')');
+    lines.push('','Apply to '+(c.name||'this contact')+'\'s card?');
+    if(!confirm(lines.join('\n')))return;
+    /* Write through to the project's contact array. */
+    const p=projects.find(function(x){return x.id===currentContact.projectId;});
+    if(!p)return;
+    const target=p.contacts[currentContact.contactIndex];
+    if(!target)return;
+    if(bestRole)target.role=bestRole;
+    if(bestPhone)target.phone=bestPhone;
+    persistProjects();
+    /* Re-render the modal so the new values appear immediately. */
+    openContactModal(p.id,currentContact.contactIndex);
+    if(typeof renderTab==='function')try{renderTab();}catch(e){}
+  }catch(err){
+    alert('Find details failed:\n\n'+(err&&err.message||err)+'\n\nThe contact\'s existing details are unchanged.');
+    try{console.warn('[Phase 8v-3m] findContactDetails error',err);}catch(_){}
+  }finally{
+    if(btn){btn.disabled=false;btn.innerHTML=origText;}
+  }
 }
 
 function scanEmails(){
@@ -7216,7 +7395,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08h · project-list-cols-snooze-time'
+      build:'2026-05-08i · contact-signature-lookup'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7381,7 +7560,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08h · project-list-cols-snooze-time';
+const BACKUP_BUILD='2026-05-08i · contact-signature-lookup';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8963,7 +9142,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08h · project-list-cols-snooze-time','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08i · contact-signature-lookup','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
