@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08x · move-email-between-projects</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08y · thread-move-and-name-match-fix</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -2421,7 +2421,7 @@ function openProjectPicker(state){
     sub.textContent='Pick a target. All emails, contacts, timeline, files, reminders move into the target. Source project is then deleted. Cannot be undone.';
   }else if(state&&state.mode==='move-email-from-project'){
     title.textContent='Move email to a different project';
-    sub.textContent='Pick a target. The email, its timeline entry, and Outlook category will move across.';
+    sub.textContent='Pick a target. The whole conversation thread will move across — every email in this email\'s chain on this project, plus their timeline entries and Outlook category.';
   }
   const inp=document.getElementById('projpick-search');
   if(inp){inp.value='';setTimeout(function(){inp.focus();},30);}
@@ -2564,55 +2564,71 @@ function _projectPickerSelect(projectId){
     _mergeProjectInto(sourceId,projectId);
     hideProjectPicker();
   }else if(_projectPickerState.mode==='move-email-from-project'){
-    /* Phase 8v-3ab: move a single email between projects.
-       Moves the email row, the matching timeline entry, and re-tags the
-       Outlook category so threading/search stays consistent. */
+    /* Phase 8v-3ac: move a whole conversation thread between projects.
+       Previously moved just the one clicked email; this nearly always
+       leaves siblings stranded on the wrong project. The chain is the
+       unit of meaning, so we move every email on the source project
+       that shares the picked email's conversationId, along with their
+       timeline entries. Outlook categories are re-tagged in one batch. */
     const sourceId=_projectPickerState.sourceId;
     const emailId=_projectPickerState.emailId;
     if(sourceId===projectId){hideProjectPicker();return;}
     const src=projects.find(function(p){return p.id===sourceId;});
     if(!src||!emailId){hideProjectPicker();return;}
-    const eIdx=(src.emails||[]).findIndex(function(x){return x.id===emailId;});
-    if(eIdx<0){alert('Email not found on the source project.');hideProjectPicker();return;}
-    const email=src.emails[eIdx];
-    /* Remove from source */
-    src.emails.splice(eIdx,1);
-    const tlIdx=(src.timeline||[]).findIndex(function(t){return t&&(t.emailId===emailId||t.id===('tl-'+emailId));});
-    let tlEntry=null;
-    if(tlIdx>=0){tlEntry=src.timeline.splice(tlIdx,1)[0];}
-    /* Add to target — guard against duplicates */
+    const seedIdx=(src.emails||[]).findIndex(function(x){return x.id===emailId;});
+    if(seedIdx<0){alert('Email not found on the source project.');hideProjectPicker();return;}
+    const seedEmail=src.emails[seedIdx];
+    const convId=seedEmail.conversationId||null;
+    /* Gather every sibling in the same conversation that's still on src.
+       No conversationId? Fall back to just this email. */
+    const moveSet=convId
+      ? src.emails.filter(function(e){return e.conversationId===convId;})
+      : [seedEmail];
+    const moveIds=new Set(moveSet.map(function(e){return e.id;}));
+    /* Confirmation for thread moves of 2+. Single-email moves don't
+       prompt — same affordance as before. */
+    if(moveSet.length>1){
+      const ok=confirm('Move '+moveSet.length+' emails (the whole conversation thread) from "'+src.name+'" to "'+target.name+'"?\n\nThe Outlook category will be re-tagged so they show under the target project in Outlook too.');
+      if(!ok){hideProjectPicker();return;}
+    }
+    /* Remove from source: emails + matching timeline entries. */
+    src.emails=(src.emails||[]).filter(function(e){return !moveIds.has(e.id);});
+    const movedTimeline=[];
+    src.timeline=(src.timeline||[]).filter(function(t){
+      const tEid=t&&(t.emailId||(t.id&&typeof t.id==='string'&&t.id.indexOf('tl-')===0?t.id.slice(3):null));
+      if(tEid&&moveIds.has(tEid)){movedTimeline.push(t);return false;}
+      return true;
+    });
+    /* Add to target — dedupe on email id. */
     if(!Array.isArray(target.emails))target.emails=[];
-    if(!target.emails.some(function(x){return x.id===emailId;})){
-      target.emails.push(email);
-    }
-    if(tlEntry){
-      if(!Array.isArray(target.timeline))target.timeline=[];
-      if(!target.timeline.some(function(t){return t&&(t.id===tlEntry.id||t.emailId===emailId);})){
-        target.timeline.unshift(tlEntry);
-      }
-    }
-    /* Refresh lastUpdated on both projects */
+    const tgtIds=new Set(target.emails.map(function(e){return e.id;}));
+    moveSet.forEach(function(e){if(!tgtIds.has(e.id))target.emails.push(e);});
+    if(!Array.isArray(target.timeline))target.timeline=[];
+    const tgtTlKeys=new Set(target.timeline.map(function(t){return (t&&t.id)||'';}));
+    movedTimeline.forEach(function(t){
+      if(t&&t.id&&!tgtTlKeys.has(t.id))target.timeline.unshift(t);
+    });
+    /* Refresh lastUpdated on both. */
     const today=new Date().toISOString().slice(0,10);
     src.lastUpdated=today;
     target.lastUpdated=today;
     persistProjects();
     hideProjectPicker();
-    /* Render whatever tab is open — we're still on the source project */
     if(typeof renderTab==='function')renderTab();
-    /* Re-tag Outlook category if the target has one. Scoped to the moved
-       email only — strips the source's SPP-CRM-* and adds the target's.
-       Single Graph PATCH; failure is contained to this email. */
-    if(target.outlookCategory){
-      _applyProjectCategoryToOneEmail(target,email,{silent:true}).catch(function(e){try{console.warn('[Phase 8v-3ab] move re-tag failed',e);}catch(_){}});
+    /* Re-tag every moved email's Outlook category in a single batch. */
+    if(target.outlookCategory&&moveSet.length){
+      _applyProjectCategoryToSomeEmails(target,moveSet,{silent:true}).catch(function(e){try{console.warn('[Phase 8v-3ac] thread re-tag failed',e);}catch(_){}});
     }
-    /* Friendly confirmation banner */
+    /* Confirmation banner */
     setTimeout(function(){
       try{
         const body=document.getElementById('detail-body');
         if(body){
           const banner=document.createElement('div');
           banner.style.cssText='background:#e7f4d8;color:#2e5e13;padding:8px 12px;border:1px solid #c8dfa7;border-radius:6px;font-size:12px;margin-bottom:10px;';
-          banner.textContent='Email moved to "'+target.name+'".';
+          banner.textContent=moveSet.length===1
+            ? 'Email moved to "'+target.name+'".'
+            : moveSet.length+' emails (conversation thread) moved to "'+target.name+'".';
           body.insertBefore(banner,body.firstChild);
           setTimeout(function(){if(banner.parentNode)banner.remove();},4000);
         }
@@ -3043,28 +3059,41 @@ async function _applyProjectCategoryToEmails(project,opts){
 async function _retagProjectEmails(project){
   return await _applyProjectCategoryToEmails(project,{silent:true});
 }
-/* Phase 8v-3ab: re-tag a single email to match a target project's category.
-   Scoped version of _applyProjectCategoryToEmails — used by the move-email
-   path where only one email's category needs to flip. Single Graph batch
-   with one PATCH; failure is contained to that email. Mirrors the result
-   back onto email.categories on success so the local state stays in sync. */
-async function _applyProjectCategoryToOneEmail(project,email,opts){
-  if(!project||!project.outlookCategory||!email||!email.id)return {success:0,failed:0,errors:[]};
+/* Phase 8v-3ac: re-tag a specific set of emails to match a target project's
+   category. Used by the move-email path (single email or whole conversation
+   thread). Batches PATCHes via Graph $batch — same primitives as the
+   whole-project helper, just scoped to the emails you hand it. Mirrors
+   successful PATCHes back onto each email.categories so local state stays
+   in sync without a re-fetch. */
+async function _applyProjectCategoryToSomeEmails(project,emails,opts){
+  if(!project||!project.outlookCategory||!Array.isArray(emails)||!emails.length)return {success:0,failed:0,errors:[]};
   const newCat=project.outlookCategory;
-  const newCats=_computeUpdatedCategories(email.categories||[],newCat);
-  const updates=[{id:email.id,categories:newCats,_emailRef:email}];
+  const updates=emails.filter(function(e){return e&&e.id;}).map(function(e){
+    const newCats=_computeUpdatedCategories(e.categories||[],newCat);
+    return {id:e.id,categories:newCats,_emailRef:e};
+  });
+  if(!updates.length)return {success:0,failed:0,errors:[]};
   let res;
   try{res=await _patchMessageCategoriesBatch(updates);}
   catch(e){
-    if(opts&&opts.silent){return {success:0,failed:1,errors:[{error:e.message||String(e)}],authError:true};}
+    if(opts&&opts.silent){return {success:0,failed:updates.length,errors:[{error:e.message||String(e)}],authError:true};}
     throw e;
   }
   if(res.success>0){
     const failedIds=new Set(res.errors.map(function(x){return x.id;}));
-    if(!failedIds.has(email.id))email.categories=newCats.slice();
+    updates.forEach(function(u){
+      if(failedIds.has(u.id))return;
+      if(u._emailRef)u._emailRef.categories=u.categories.slice();
+    });
     try{persistProjects();}catch(e){}
   }
   return res;
+}
+/* Phase 8v-3ab: single-email re-tag, kept for backwards compat with any
+   future single-email callsite. Delegates to the bulk helper. */
+async function _applyProjectCategoryToOneEmail(project,email,opts){
+  if(!email)return {success:0,failed:0,errors:[]};
+  return await _applyProjectCategoryToSomeEmails(project,[email],opts);
 }
 /* Phase 8v-2z: create an Outlook calendar event as a follow-up for a
    specific email. Uses Calendars.ReadWrite which is already in our scopes.
@@ -3334,6 +3363,42 @@ function _isEmailAlreadyLinked(emailId){
    existing project names/addresses. Without this, "the", "and", "street"
    etc. would create constant false-positive overlap hints. */
 const _STOPWORDS=new Set(['the','a','an','and','or','of','for','to','in','on','at','by','with','from','re','fwd','street','road','avenue','lane','way','close','court','place','drive','square','fw','rd','st','ave','ltd','plc','limited','&']);
+/* Phase 8v-3ac: generic words that should NOT trigger a name match on their
+   own. These show up in many unrelated project names + email subjects.
+   Without this filter the matcher false-positives on "school", "primary",
+   "drawing" etc. — a real bug Richard hit where an email about St Peter's
+   RC Primary School was auto-imported into a Truro School project just
+   because both names contain "school". Kept conservative: a word is here
+   ONLY if it commonly appears in many unrelated projects/subjects. */
+const _GENERIC_NAME_TOKENS=new Set([
+  /* Building types */
+  'school','schools','primary','secondary','college','university','academy',
+  'hospital','surgery','clinic','office','offices','building','buildings',
+  'centre','center','hall','halls','suite','suites','complex','development',
+  'apartments','residence','residences','residential','commercial','industrial',
+  /* Room/space */
+  'room','rooms','space','spaces','floor','floors','ground','upper','lower',
+  'rehearsal','classroom','classrooms','library','gym','reception',
+  /* Descriptors */
+  'large','small','medium','additional','new','existing','refurbishment',
+  'refurb','extension','redevelopment','phase','works','project','projects',
+  /* Construction terms */
+  'drawing','drawings','spec','specification','specifications','sample','samples',
+  'section','sections','detail','details','elevation','elevations','plan','plans',
+  'cladding','lining','linings','panel','panels','door','doors','window','windows',
+  'finish','finishes','install','installation','supply','fitting','fittings',
+  'acoustic','acoustics',
+  /* Sales/admin */
+  'cover','response','query','enquiry','enquiries','quote','quotes','quotation',
+  'order','orders','invoice','update','updates','submission','submissions',
+  /* UK regions/counties (only when used alone — paired with another distinctive
+     token they still trigger via 2+ match path if we add one later) */
+  'cornwall','devon','somerset','dorset','kent','sussex','surrey','essex',
+  'suffolk','norfolk','yorkshire','lancashire','london','manchester','bristol',
+  'birmingham','liverpool','leeds','sheffield','glasgow','edinburgh','cardiff',
+  /* Compass / direction */
+  'north','south','east','west','central','site','sites'
+]);
 function _tokenise(s){
   if(!s)return [];
   return String(s).toLowerCase().split(/[^a-z0-9]+/).filter(function(w){
@@ -3369,20 +3434,42 @@ function _findRefMatchProjects(email){
   }
   return matched;
 }
+/* Phase 8v-3ac: a token is "distinctive" for the name matcher if it's
+   long enough to identify a specific project AND isn't in the generic-words
+   list. We also treat any token containing a digit as distinctive (project
+   codes like CT24085 are highly specific). */
+function _isDistinctiveNameToken(t){
+  if(!t||t.length<5)return false;
+  if(/\d/.test(t))return true;             /* digit-bearing = always distinctive */
+  if(_GENERIC_NAME_TOKENS.has(t))return false;
+  return true;
+}
 function _findNameMatchProjects(email){
   /* Returns ALL projects whose distinctive name tokens appear in the
-     subject. Distinctive = length >= 5, not a stop-word. This filters out
-     generic words like "park", "view", "house" that would create constant
-     false matches. The cross-domain "Riverside drawings" → "Riverside
-     Apartments" link works via this path. */
+     subject. Two structural changes vs the earlier version:
+
+     (1) Match is EXACT token, not substring. Old code did
+         subj.indexOf('school')>=0 which fired on "preschool", "schools",
+         and any tokenisation-foreign substring. We compare against the
+         tokenised subject set instead.
+     (2) Distinctive-token filter (_isDistinctiveNameToken) drops generic
+         words like "school", "primary", "drawing" — these appear in many
+         unrelated projects so single-token matches on them are noise.
+
+     Net effect: a name match requires at least one shared token that's
+     genuinely identifying. "Riverside drawings" still matches "Riverside
+     Apartments" because riverside is 9 chars and not generic. A subject
+     mentioning "Primary School" no longer matches every project with
+     "School" in its name. */
   if(!email||!email.subject)return [];
-  const subj=email.subject.toLowerCase();
+  const subjTokens=new Set(_tokenise(email.subject));
+  if(!subjTokens.size)return [];
   const matched=[];
   for(let i=0;i<projects.length;i++){
     const p=projects[i];
-    const tokens=_tokenise(p.name||'').filter(function(t){return t.length>=5;});
+    const tokens=_tokenise(p.name||'').filter(_isDistinctiveNameToken);
     if(!tokens.length)continue;
-    if(tokens.some(function(t){return subj.indexOf(t)>=0;}))matched.push(p);
+    if(tokens.some(function(t){return subjTokens.has(t);}))matched.push(p);
   }
   return matched;
 }
@@ -7847,7 +7934,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08x · move-email-between-projects'
+      build:'2026-05-08y · thread-move-and-name-match-fix'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8012,7 +8099,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08x · move-email-between-projects';
+const BACKUP_BUILD='2026-05-08y · thread-move-and-name-match-fix';
 function exportBackup(){
   const payload={
     _meta:{
@@ -10519,7 +10606,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08x · move-email-between-projects','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08y · thread-move-and-name-match-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
