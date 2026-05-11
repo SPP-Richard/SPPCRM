@@ -700,11 +700,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="showBulkImport()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Bulk import<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ns" data-admin-header="true" style="margin-top:8px;">Admin</div>
     <div class="ni" data-admin-only="true" onclick="showAdmin()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/></svg>Sales rep list<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
+    <div class="ni" data-admin-only="true" onclick="showAdminData()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4v8a1 1 0 001 1h10a1 1 0 001-1V6l-3-3H3a1 1 0 00-1 1z"/><path d="M11 3v3h3"/></svg>Data &amp; storage<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openAdminScanSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>Scan settings<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
+    <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08t · admin-reorg-scan-day</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08u · admin-split-modals</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1061,12 +1063,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 </div>
 
-<!-- ADMIN MODAL -->
+<!-- SALES REP LIST MODAL — Phase 8v-3y (was the combined Admin modal) -->
 <div class="modal-bg" id="admin-modal">
   <div class="modal-box w400">
-    <div class="modal-head"><div><div class="modal-title">Admin</div><div class="modal-sub">Sales reps, data &amp; storage, system tools</div></div><button class="xb" onclick="hideAdmin()">×</button></div>
+    <div class="modal-head"><div><div class="modal-title">Sales rep list</div><div class="modal-sub">Admin only — names, 365 email links and admin rights</div></div><button class="xb" onclick="hideAdmin()">×</button></div>
     <div class="modal-body">
-      <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;border-bottom:1px solid #e8e8e4;padding-bottom:6px;margin-bottom:10px;">Sales rep list</div>
       <div id="rep-list"></div>
       <div class="add-row">
         <div style="font-size:11px;color:#aaa;margin-bottom:8px;font-weight:500;">Add new rep</div>
@@ -1075,11 +1076,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div><div style="font-size:11px;color:#777;margin-bottom:4px;">365 email</div><input class="ri-inp" type="email" placeholder="name@spp.co.uk" id="new-rep-email"/></div>
           <button class="btn btn-primary btn-sm" onclick="addRep()" style="height:34px;">Add</button>
         </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#555;margin-top:10px;cursor:pointer;"><input type="checkbox" id="new-rep-admin"/> Grant admin rights (bulk import, initial scan, manage reps)</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#555;margin-top:10px;cursor:pointer;"><input type="checkbox" id="new-rep-admin"/> Grant admin rights (bulk import, initial scan, sales rep list)</label>
       </div>
-      <!-- Admin sections grouped (8v-3x). -->
-      <div style="margin-top:18px;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;border-bottom:1px solid #e8e8e4;padding-bottom:6px;">Data &amp; storage</div>
-      <div style="margin-top:12px;padding:12px;border:1px solid #d3dce6;background:#f5f8fb;border-radius:8px;">
+    </div>
+    <div class="modal-lock"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg>Only admins can edit this list or grant admin rights</div>
+  </div>
+</div>
+
+<!-- DATA & STORAGE MODAL — Phase 8v-3y separate clickable area -->
+<div class="modal-bg" id="admin-data-modal">
+  <div class="modal-box w400">
+    <div class="modal-head"><div><div class="modal-title">Data &amp; storage</div><div class="modal-sub">Folder, snapshots, backups, 365 sign-in</div></div><button class="xb" onclick="hideAdminData()">×</button></div>
+    <div class="modal-body">
+      <div style="padding:12px;border:1px solid #d3dce6;background:#f5f8fb;border-radius:8px;">
         <div style="font-size:11px;color:#0c447c;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Data folder (snapshots on disk)</div>
         <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
           Connect a folder on your computer (recommended: a OneDrive subfolder) and snapshots will be saved there as JSON files instead of in browser storage. This bypasses the ~5MB browser limit and gives you OneDrive cloud sync for free.
@@ -1113,8 +1122,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <button class="btn btn-sm" onclick="signOut()">Sign out of Microsoft</button>
         </div>
       </div>
-      <div style="margin-top:20px;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;border-bottom:1px solid #e8e8e4;padding-bottom:6px;">Sys admin tools</div>
-      <div style="margin-top:12px;padding:12px;border:1px solid #e6c1c1;background:#fdf3f3;border-radius:8px;">
+    </div>
+    <div class="modal-lock"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg>Admin only</div>
+  </div>
+</div>
+
+<!-- SYS ADMIN TOOLS MODAL — Phase 8v-3y separate clickable area -->
+<div class="modal-bg" id="admin-sys-modal">
+  <div class="modal-box w400">
+    <div class="modal-head"><div><div class="modal-title">Sys admin tools</div><div class="modal-sub">Destructive operations — admin only</div></div><button class="xb" onclick="hideAdminSys()">×</button></div>
+    <div class="modal-body">
+      <div style="padding:12px;border:1px solid #e6c1c1;background:#fdf3f3;border-radius:8px;">
         <div style="font-size:11px;color:#a62929;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Wipe demo data</div>
         <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:10px;">
           Permanently deletes all projects, sales reps (except yourself), company notes &amp; BT codes, and the BisTrack-entered markers. Tags you've created and saved settings are kept. Use this when you're ready to start using the app for real work.
@@ -1122,7 +1140,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button class="btn btn-sm" onclick="wipeDemoData()" style="background:#a62929;color:#fff;border-color:#8a1f1f;">Wipe demo data and start fresh</button>
       </div>
     </div>
-    <div class="modal-lock"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg>Only admins can edit this list or grant admin rights</div>
+    <div class="modal-lock"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg>Admin only</div>
   </div>
 </div>
 
@@ -7653,7 +7671,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08t · admin-reorg-scan-day'
+      build:'2026-05-08u · admin-split-modals'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7818,7 +7836,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08t · admin-reorg-scan-day';
+const BACKUP_BUILD='2026-05-08u · admin-split-modals';
 function exportBackup(){
   const payload={
     _meta:{
@@ -9811,8 +9829,22 @@ function generatePipelineReportXlsx(){
 /* ------------------------- END REPORTS ------------------------- */
 
 /* Admin */
-function showAdmin(){if(!requireAdmin('Manage reps'))return;renderRepList();renderDataFolderStatus();renderSnapshotList();document.getElementById('admin-modal').classList.add('open');}
+/* Phase 8v-3y: three separate admin modals — Sales rep list, Data &
+   storage, Sys admin tools. Each sidebar item opens its own focused dialog. */
+function showAdmin(){if(!requireAdmin('Sales rep list'))return;renderRepList();document.getElementById('admin-modal').classList.add('open');}
 function hideAdmin(){document.getElementById('admin-modal').classList.remove('open');}
+function showAdminData(){
+  if(!requireAdmin('Data & storage'))return;
+  try{renderDataFolderStatus();}catch(e){}
+  try{renderSnapshotList();}catch(e){}
+  document.getElementById('admin-data-modal').classList.add('open');
+}
+function hideAdminData(){document.getElementById('admin-data-modal').classList.remove('open');}
+function showAdminSys(){
+  if(!requireAdmin('Sys admin tools'))return;
+  document.getElementById('admin-sys-modal').classList.add('open');
+}
+function hideAdminSys(){document.getElementById('admin-sys-modal').classList.remove('open');}
 function renderRepList(){
   document.getElementById('rep-list').innerHTML=salesReps.map((r,i)=>{
     const adminBadge=r.admin?`<span style="display:inline-block;background:#e6f1fb;color:#0c447c;font-size:9px;padding:2px 6px;border-radius:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;margin-left:6px;">Admin</span>`:'';
@@ -10218,7 +10250,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08t · admin-reorg-scan-day','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08u · admin-split-modals','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
