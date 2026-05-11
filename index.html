@@ -704,7 +704,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08n · company-inline-edit-cleanup</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08o · company-timeline-types</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -892,13 +892,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div style="flex:1;min-width:0;">
             <div class="pname-lg" id="co-name">—</div>
             <div class="paddr-sm" id="co-type-label">—</div>
-            <div class="cco-action-row">
-              <!-- Phase 8v-3r: Find-details button removed — address + main
-                   phone are now populated automatically when you run Find
-                   details on any contact card, and the Address / Main phone
-                   fact cells below are directly editable. -->
-              <button class="cco-action-btn" onclick="saveCompanyToOutlook()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Save to Outlook</button>
-            </div>
+            <!-- Phase 8v-3s: action row removed entirely.
+                 - Find details: handled at contact level (signature scan).
+                 - Save to Outlook: Outlook's contacts model is flat — no
+                   parent Company entity. Contacts are saved individually
+                   via the contact card with companyName populated. -->
           </div>
         </div>
       </div>
@@ -7385,6 +7383,9 @@ let companyFilter='all';       // type filter: all|architect|mc|sub
 /* Phase 8v-3o: activity filter set by the new stat cards. Orthogonal to
    companyFilter so a user can have "MC" type + "Active projects" activity. */
 let companyView='all';         // activity filter: all|active|stale
+/* Phase 8v-3s: company timeline add-bar type picker.
+   Values: 'note'|'reminder'|'call-in'|'call-out'|'meeting'. */
+let currentCoTlType='note';
 let currentCompanyTab='details';
 let companyTimelineFilter='all'; // 'all', 'company', or a specific projectId
 /* Layout variants: 'classic' (4 tabs), 'compact' (2 tabs), 'scroll' (single page), 'split' (two-column). */
@@ -7577,7 +7578,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08n · company-inline-edit-cleanup'
+      build:'2026-05-08o · company-timeline-types'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7742,7 +7743,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08n · company-inline-edit-cleanup';
+const BACKUP_BUILD='2026-05-08o · company-timeline-types';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8245,8 +8246,14 @@ function renderCoDetailsSection(co){
     `<option value="${esc(r.name)}"${r.name===co.rep?' selected':''}>${esc(r.name)}</option>`
   ).join('');
   const todayIso=new Date().toISOString().slice(0,10);
+  /* Phase 8v-3s: type-aware entry rendering. type defaults to 'note' for
+     entries created before this build (backward compat). */
+  const typeLabels={'note':'Note','call-in':'Call inbound','call-out':'Call outbound','meeting':'Meeting'};
+  const typeBg={'note':'#f4f0e8','call-in':'#e6f1fb','call-out':'#fbf0e0','meeting':'#f3e9f7'};
+  const typeFg={'note':'#7a5a14','call-in':'#185fa5','call-out':'#a35400','meeting':'#7a3ea3'};
   const notesList=co.noteEntries.length?co.noteEntries.map(n=>{
     const rem=n.reminder;
+    const t=n.type||'note';
     const critBadge=rem&&rem.critical?`<span class="cco-crit-badge" title="Critical — skips the Chase Queue and auto-pushes to Outlook calendar after 7 days overdue">CRITICAL</span>`:'';
     const remBadge=rem
       ? `<span class="cco-rem-badge ${rem.done?'done':(rem.date<todayIso?'overdue':'pending')}" onclick="event.stopPropagation();toggleCompanyNoteReminderDone('${esc(n.id)}')" title="Click to mark ${rem.done?'pending':'done'}">
@@ -8254,17 +8261,26 @@ function renderCoDetailsSection(co){
           ${rem.done?'Done':(rem.date<todayIso?'Overdue':'Reminder')} · ${esc(fmtDate(rem.date))}${rem.text?' · '+esc(rem.text):''}
         </span>${critBadge}`
       : '';
+    const typeBadge='<span style="display:inline-block;font-size:10px;background:'+typeBg[t]+';color:'+typeFg[t]+';padding:1px 7px;border-radius:3px;font-weight:600;margin-right:6px;">'+(typeLabels[t]||'Note')+(n.time?' · '+esc(n.time):'')+'</span>';
+    const teamsBtn=n.teamsJoinUrl
+      ? `<a href="${esc(n.teamsJoinUrl)}" target="_blank" style="display:inline-block;margin-top:6px;font-size:11px;padding:4px 10px;background:#5059c9;color:#fff;text-decoration:none;border-radius:4px;font-weight:500;">Join Teams meeting ↗</a>`
+      : '';
+    const notesBlock=n.notes
+      ? '<div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap;">'+esc(n.notes)+'</div>'
+      : '';
     return `<div class="cco-note-entry">
       <div class="cco-note-head">
-        <div class="cco-note-meta"><strong>${esc(n.author||'')}</strong> · ${esc(fmtDate(n.date))}</div>
-        <button class="cco-note-del" title="Delete note" onclick="deleteCompanyNoteEntry('${esc(n.id)}')">
+        <div class="cco-note-meta">${typeBadge}<strong>${esc(n.author||'')}</strong> · ${esc(fmtDate(n.date))}</div>
+        <button class="cco-note-del" title="Delete entry" onclick="deleteCompanyNoteEntry('${esc(n.id)}')">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V3a1 1 0 011-1h2a1 1 0 011 1v1M5 4v9a1 1 0 001 1h4a1 1 0 001-1V4"/></svg>
         </button>
       </div>
       <div class="cco-note-text">${esc(n.text||'')}</div>
+      ${notesBlock}
+      ${teamsBtn}
       ${remBadge}
     </div>`;
-  }).join(''):'<div class="cco-note-empty">No notes yet — add one below.</div>';
+  }).join(''):'<div class="cco-note-empty">No entries yet — add one below.</div>';
 
   return `
     <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:16px 18px;margin-bottom:14px;">
@@ -8281,18 +8297,21 @@ function renderCoDetailsSection(co){
     </div>
     <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:16px 18px;">
       <div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:10px;">Company record</div>
-      <div class="cco-fact-lbl" style="margin-bottom:8px;">Notes</div>
+      <div class="cco-fact-lbl" style="margin-bottom:8px;">Activity</div>
       <div class="cco-notes-list">${notesList}</div>
+      <!-- Phase 8v-3s: type picker matching the project timeline. Note /
+           Reminder / Call inbound / Call outbound / Meeting. -->
       <div class="cco-note-add">
-        <textarea id="cco-note-text" class="cco-inp-textarea" rows="3" placeholder="Add a note — relationships, preferences, history, gotchas…"></textarea>
-        <div class="cco-note-add-row">
-          <label class="cco-rem-toggle"><input type="checkbox" id="cco-note-rem-on" onchange="toggleCompanyNoteReminderForm(this.checked)"> Set a reminder</label>
-          <div id="cco-note-rem-fields" class="cco-rem-fields" style="display:none;">
-            <input type="date" id="cco-note-rem-date" class="cco-inp-select" style="max-width:160px;" value="">
-            <input type="text" id="cco-note-rem-text" class="cco-inp-select" style="flex:1;min-width:180px;" placeholder="Reminder note (e.g. follow up on tender)">
-            <label class="cco-rem-toggle" title="Critical reminders skip the Chase Queue and auto-create an Outlook calendar event if they are still open 7 days after the due date."><input type="checkbox" id="cco-note-rem-critical"> Critical</label>
-          </div>
-          <button class="cco-note-save-btn" onclick="addCompanyNoteEntry()">Save note</button>
+        <div class="tl-type-pills" style="margin-bottom:8px;">
+          <button class="tl-type${currentCoTlType==='note'?' active':''}" onclick="setCoTlType('note')">Note</button>
+          <button class="tl-type${currentCoTlType==='reminder'?' active':''}" onclick="setCoTlType('reminder')">Reminder</button>
+          <button class="tl-type${currentCoTlType==='call-in'?' active':''}" onclick="setCoTlType('call-in')">Call inbound</button>
+          <button class="tl-type${currentCoTlType==='call-out'?' active':''}" onclick="setCoTlType('call-out')">Call outbound</button>
+          <button class="tl-type${currentCoTlType==='meeting'?' active':''}" onclick="setCoTlType('meeting')">Meeting</button>
+        </div>
+        ${_renderCoAddInputs(currentCoTlType)}
+        <div class="cco-note-add-row" style="justify-content:flex-end;">
+          <button class="cco-note-save-btn" onclick="addCompanyTimelineEntry()">${currentCoTlType==='reminder'?'Save reminder':currentCoTlType==='meeting'?'Save &amp; create Teams meeting':'Save'}</button>
         </div>
       </div>
       <div class="cco-fact-lbl" style="margin-top:18px;margin-bottom:6px;">Assigned rep</div>
@@ -8603,26 +8622,157 @@ function toggleCompanyNoteReminderForm(on){
   }
 }
 /* Create a new note entry from the form inputs, persist, re-render */
-function addCompanyNoteEntry(){
+/* Phase 8v-3s: company-level timeline type picker. Mirrors the project
+   timeline (Note / Reminder / Call in / Call out / Meeting). State held in
+   the closure-scoped `currentCoTlType`. Default 'note'. */
+function setCoTlType(t){
+  currentCoTlType=t||'note';
+  renderCompanyTab();
+}
+/* Build a deep-link URL back to the company detail page. Used in calendar
+   event bodies for company-level meetings + reminders. */
+function _buildCompanyDeepLink(name){
+  try{
+    const loc=window.location;
+    const base=loc.origin+loc.pathname.replace(/\/?index\.html$/,'/').replace(/[^/]*$/,'');
+    return base+'?company='+encodeURIComponent(name||'');
+  }catch(e){return '';}
+}
+/* Create a Teams meeting for a company-level entry. Mirrors
+   _createTeamsMeetingForEntry (project flavour) but uses the company name
+   + company deep-link. Returns the Graph event response. */
+async function _createCompanyTeamsMeeting(companyName,entry){
+  if(!companyName||!entry)return null;
+  const token=await getAccessToken(['Calendars.ReadWrite']);
+  if(!token)throw new Error('Not signed in or Calendars.ReadWrite not granted');
+  const date=entry.date||today();
+  const time=entry.time||'09:00';
+  const startIso=date+'T'+time+':00';
+  const durMin=entry.duration||60;
+  const startDate=new Date(startIso);
+  const endDate=new Date(startDate.getTime()+durMin*60*1000);
+  const coUrl=_buildCompanyDeepLink(companyName);
+  const safe=function(s){return String(s||'').replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';});};
+  const bodyHtml=
+    '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.45;">'
+    +'<p>Company meeting from SPP CRM.</p>'
+    +'<p><strong>Company:</strong> '+safe(companyName)+'</p>'
+    +(entry.notes?'<p><strong>Notes:</strong></p><p>'+safe(entry.notes).replace(/\n/g,'<br>')+'</p>':'')
+    +'<p><a href="'+safe(coUrl)+'">Open company in SPP CRM ↗</a></p>'
+    +'</div>';
+  const evt={
+    subject:entry.text||(companyName+' meeting'),
+    start:{dateTime:_isoToCalendarLocal(startDate.toISOString()),timeZone:'Europe/London'},
+    end:{dateTime:_isoToCalendarLocal(endDate.toISOString()),timeZone:'Europe/London'},
+    body:{contentType:'HTML',content:bodyHtml},
+    isOnlineMeeting:true,
+    onlineMeetingProvider:'teamsForBusiness',
+    reminderMinutesBeforeStart:15,
+    isReminderOn:true
+  };
+  const r=await fetch('https://graph.microsoft.com/v1.0/me/events',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify(evt)
+  });
+  if(!r.ok){
+    let detail='';try{const j=await r.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(_){}
+    throw new Error('Teams meeting creation failed: HTTP '+r.status+(detail?' — '+detail:''));
+  }
+  return await r.json();
+}
+/* Phase 8v-3s: conditional input block based on the chosen type. Wraps in a
+   single element so the parent template can drop it in via interpolation. */
+function _renderCoAddInputs(type){
+  if(type==='note'){
+    return '<textarea id="cco-note-text" class="cco-inp-textarea" rows="3" placeholder="Add a note — relationships, preferences, history, gotchas…"></textarea>';
+  }
+  if(type==='reminder'){
+    return ''
+      +'<input type="text" id="cco-note-text" class="cco-inp-select" style="width:100%;margin-bottom:8px;" placeholder="What to follow up on (e.g. tender response)"/>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        +'<input type="date" id="cco-note-rem-date" class="cco-inp-select" style="max-width:160px;" value=""/>'
+        +'<label class="cco-rem-toggle" title="Critical reminders skip the Chase Queue and auto-create an Outlook calendar event if they are still open 7 days after the due date."><input type="checkbox" id="cco-note-rem-critical"/> Critical</label>'
+      +'</div>';
+  }
+  /* call-in / call-out / meeting all use the same 4-field layout */
+  const isMeeting=type==='meeting';
+  const headerPh=type==='call-in'?'Inbound call subject (e.g. James queried tender)'
+                  :type==='call-out'?'Outbound call subject (e.g. Chased Sarah on programme)'
+                  :'Meeting subject (e.g. Spec review)';
+  return ''
+    +'<input type="text" id="cco-note-text" class="cco-inp-select" style="width:100%;margin-bottom:8px;" placeholder="'+headerPh+'"/>'
+    +'<textarea id="cco-note-notes" class="cco-inp-textarea" rows="2" placeholder="Notes (optional)" style="margin-bottom:8px;"></textarea>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+      +'<input type="date" id="cco-note-tl-date" class="cco-inp-select" style="max-width:160px;" value="'+today()+'"/>'
+      +'<input type="time" id="cco-note-tl-time" class="cco-inp-select" style="max-width:120px;" value="'+(isMeeting?'09:00':String(new Date().getHours()).padStart(2,'0')+':'+String(new Date().getMinutes()).padStart(2,'0'))+'"/>'
+      +(isMeeting?'<span style="font-size:11px;color:#888;">Creates a Teams meeting in your Outlook calendar.</span>':'')
+    +'</div>';
+}
+/* Phase 8v-3s: unified save handler for company timeline entries. Reads the
+   appropriate inputs based on currentCoTlType, persists a noteEntry with a
+   `type` field, and (for meetings) pushes a Teams meeting to Outlook. */
+async function addCompanyTimelineEntry(){
   if(!currentCompany)return;
   const key=currentCompany.toLowerCase();
+  const author=(typeof ME!=='undefined'&&ME)||'You';
+  const today4=new Date().toISOString().slice(0,10);
   const ta=document.getElementById('cco-note-text');
   const text=(ta&&ta.value||'').trim();
-  if(!text){if(ta){ta.focus();ta.style.borderColor='#c0392b';setTimeout(()=>{ta.style.borderColor='';},1200);}return;}
-  const remOn=document.getElementById('cco-note-rem-on');
-  let reminder=null;
-  if(remOn&&remOn.checked){
+  if(!text){
+    if(ta){ta.focus();ta.style.borderColor='#c0392b';setTimeout(function(){ta.style.borderColor='';},1200);}
+    return;
+  }
+  const ov=ensureCompanyOverride(key);
+  let entry;
+  if(currentCoTlType==='note'){
+    entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text,reminder:null};
+  }else if(currentCoTlType==='reminder'){
     const rd=(document.getElementById('cco-note-rem-date').value||'').trim();
-    const rt=(document.getElementById('cco-note-rem-text').value||'').trim();
     const critEl=document.getElementById('cco-note-rem-critical');
     const critical=!!(critEl&&critEl.checked);
-    if(rd)reminder={date:rd,text:rt,done:false,critical};
+    if(!rd){alert('Please pick a reminder date.');return;}
+    entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text:'Reminder set — '+text,reminder:{date:rd,text,done:false,critical}};
+  }else{
+    /* call-in / call-out / meeting */
+    const notesEl=document.getElementById('cco-note-notes');
+    const dateEl=document.getElementById('cco-note-tl-date');
+    const timeEl=document.getElementById('cco-note-tl-time');
+    const notes=(notesEl&&notesEl.value||'').trim();
+    const date=(dateEl&&dateEl.value||today4).trim();
+    const time=(timeEl&&timeEl.value||'').trim();
+    entry={id:nextCompanyNoteId(),type:currentCoTlType,date,time,author,text,notes,reminder:null};
   }
-  const author=(typeof ME!=='undefined'&&ME)||'You';
-  const entry={id:nextCompanyNoteId(),date:new Date().toISOString().slice(0,10),author,text,reminder};
-  ensureCompanyOverride(key).noteEntries.unshift(entry);
+  ov.noteEntries.unshift(entry);
   persistCompanyOverrides();
+  /* Reset the type back to note so the next add starts fresh. Re-render
+     before the async meeting POST so the entry appears in the list
+     immediately; the Teams join URL gets stamped on when the promise
+     resolves. */
+  const wasMeeting=currentCoTlType==='meeting';
+  currentCoTlType='note';
   renderCompanyTab();
+  if(wasMeeting){
+    _createCompanyTeamsMeeting(currentCompany,entry).then(function(evt){
+      const fresh=ov.noteEntries.find(function(x){return x.id===entry.id;});
+      if(fresh){
+        fresh.teamsJoinUrl=(evt.onlineMeeting&&evt.onlineMeeting.joinUrl)||'';
+        fresh.calendarEventId=evt.id||'';
+        fresh.calendarEventWebLink=evt.webLink||'';
+        try{persistCompanyOverrides();}catch(e){}
+        try{renderCompanyTab();}catch(e){}
+      }
+    }).catch(function(err){
+      alert('Meeting saved in CRM, but Outlook calendar push failed:\n\n'+(err&&err.message||err));
+      try{console.warn('[Phase 8v-3s] Company meeting push failed',err);}catch(_){}
+    });
+  }
+}
+/* Phase 8v-3s: kept for backwards compatibility — old callers route into
+   the new unified entry point with type defaulting to 'note'. */
+function addCompanyNoteEntry(){
+  currentCoTlType=currentCoTlType||'note';
+  addCompanyTimelineEntry();
 }
 /* Delete a note entry by id */
 function deleteCompanyNoteEntry(id){
@@ -9527,7 +9677,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08n · company-inline-edit-cleanup','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08o · company-timeline-types','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
