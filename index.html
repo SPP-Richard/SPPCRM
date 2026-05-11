@@ -704,7 +704,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08p · timeline-report-per-company</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08q · report-list-modal-filter</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1354,6 +1354,47 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div class="modal-foot">
       <button class="btn btn-sm" onclick="hideBistrackCopy()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 8v-3u: company-level BisTrack copy modal. Mirrors the original
+     bistrack-modal styling but only carries 2 fields (BT code + body) and
+     a per-company entered checkbox. -->
+<div class="modal-bg" id="company-bt-modal">
+  <div class="modal-box w400">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Copy to BisTrack</div>
+        <div class="modal-sub">Click a Copy button — paste into the matching BisTrack slot</div>
+      </div>
+      <button class="xb" onclick="hideCompanyBtModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="bt-meta" id="cbt-meta">—</div>
+      <div class="bt-field">
+        <div class="bt-field-hd">
+          <span class="bt-field-label">BT customer code</span>
+          <button class="bt-copy-btn" id="cbt-copy-btcode" onclick="copyCompanyBtField('btcode')">Copy <span class="bt-kbd">1</span></button>
+        </div>
+        <input type="text" class="bt-input" id="cbt-btcode" readonly/>
+      </div>
+      <div class="bt-field">
+        <div class="bt-field-hd">
+          <span class="bt-field-label">Note body</span>
+          <button class="bt-copy-btn" id="cbt-copy-body" onclick="copyCompanyBtField('body')">Copy <span class="bt-kbd">2</span></button>
+        </div>
+        <textarea class="bt-input bt-textarea" id="cbt-body" readonly style="min-height:140px;"></textarea>
+      </div>
+      <div class="bt-tip">Open the company in BisTrack via its customer code, create a Notepad Note, and paste the body. Ticking the box below excludes this company from the "Not entered" view until new entries arrive.</div>
+      <div class="bt-entered-row" id="cbt-entered-row" onclick="toggleCurrentCompanyEntered()">
+        <div class="bt-entered-check"><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg></div>
+        <div class="bt-entered-label">Entered in BisTrack</div>
+        <div class="bt-entered-hint" id="cbt-entered-hint">ticks when the note body is copied</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-sm" onclick="hideCompanyBtModal()">Close</button>
     </div>
   </div>
 </div>
@@ -7578,7 +7619,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08p · timeline-report-per-company'
+      build:'2026-05-08q · report-list-modal-filter'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7743,7 +7784,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08p · timeline-report-per-company';
+const BACKUP_BUILD='2026-05-08q · report-list-modal-filter';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8953,7 +8994,9 @@ function buildTimelineReportData(startIso,endIso){
       btCode:(companyOverrides[co.name.toLowerCase()]||{}).btCode||'',
       count:inRange.length,
       block:block,
-      lines:lines /* kept for preview rendering */
+      lines:lines,
+      items:inRange /* Phase 8v-3u: raw timeline items so the entered-key
+                       lookup can read type/date/time/text per entry. */
     });
   });
   /* Companies alphabetical for predictable output */
@@ -8993,6 +9036,40 @@ function toggleRptHideEntered(){
   previewTimelineReport();
 }
 
+/* Phase 8v-3u: stable key for one timeline item used by bistrackEntered.
+   Same shape as the legacy key but supports new entry types (call-in,
+   call-out, meeting) and includes time so two same-day calls don't share
+   a key. */
+function _btCompanyEntryKey(t,companyName){
+  const sumKey=String(t.text||t.title||'').replace(/\s+/g,' ').trim().slice(0,60);
+  return [t.type||'',companyName||'',t.date||'',t.time||'',sumKey].join('|');
+}
+/* True if every entry on this company (in the current preview window) is
+   already marked entered in BisTrack. Companies with zero entries are not
+   considered "all entered" — they're just empty. */
+function _isCompanyAllEntered(co){
+  const items=(co&&co.items)||[];
+  if(!items.length)return false;
+  for(const t of items){
+    if(!bistrackEntered[_btCompanyEntryKey(t,co.name)])return false;
+  }
+  return true;
+}
+/* Toggle every entry in a company's window between entered / not entered. */
+function _setCompanyEnteredAll(co,flag){
+  const items=(co&&co.items)||[];
+  for(const t of items){
+    const k=_btCompanyEntryKey(t,co.name);
+    if(flag)bistrackEntered[k]=true;else delete bistrackEntered[k];
+  }
+  persistBistrackEntered();
+}
+/* Phase 8v-3u: preview filter — 'all' or 'not-entered'. */
+let rptCompanyFilter='all';
+function setRptCompanyFilter(v){
+  rptCompanyFilter=v||'all';
+  previewTimelineReport();
+}
 function previewTimelineReport(){
   const s=document.getElementById('rpt-tl-start').value;
   const e=document.getElementById('rpt-tl-end').value;
@@ -9012,50 +9089,138 @@ function previewTimelineReport(){
     btn.disabled=true;
     return;
   }
-  /* Phase 8v-3t: per-company consolidated preview. Each company gets one
-     card containing the multi-line block, a "Copy block" button, and a
-     small "BT code" badge when known. */
-  const cardsHtml=data.companies.map(function(co,idx){
-    const btBadge=co.btCode?' · <span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#0c447c;background:#eef4fb;padding:1px 6px;border-radius:3px;">'+esc(co.btCode)+'</span>':' · <span style="color:#c77;font-size:11px;">BT code not yet linked</span>';
-    return ''
-      +'<div style="border:1px solid #e8e8e4;border-radius:8px;background:#fff;padding:10px 12px;margin-bottom:10px;">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;">'
-        +'<div style="font-size:13px;font-weight:600;color:#222;">'+esc(co.name)+btBadge+' · <span style="color:#666;font-weight:500;">'+co.count+' entr'+(co.count===1?'y':'ies')+'</span></div>'
-        +'<button class="btn btn-sm" onclick="copyCompanyBlock('+idx+')" title="Copy this block as multi-line text — paste into a BisTrack notepad or anywhere">Copy block</button>'
-      +'</div>'
-      +'<pre style="margin:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;background:#f7faff;border:1px solid #e5ecf6;border-radius:6px;padding:8px 10px;white-space:pre-wrap;max-height:200px;overflow:auto;">'+esc(co.block)+'</pre>'
+  /* Decorate each company with an `entered` flag so the row knows whether
+     to show a tick. */
+  data.companies.forEach(function(co){co.allEntered=_isCompanyAllEntered(co);});
+  /* Filter according to the active pill. */
+  const showAll=rptCompanyFilter==='all';
+  const visible=data.companies.filter(function(co){return showAll||!co.allEntered;});
+  const enteredCount=data.companies.filter(function(co){return co.allEntered;}).length;
+  /* Quick-pick filter pills */
+  const pill=function(label,value){
+    const active=rptCompanyFilter===value;
+    return '<button class="fpill'+(active?' active':'')+'" onclick="setRptCompanyFilter('+JSON.stringify(value).replace(/"/g,'&quot;')+')" style="font-size:11px;">'+esc(label)+'</button>';
+  };
+  const pillRow=''
+    +'<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;">'
+    +'<span style="font-size:11px;color:#777;">Show:</span>'
+    +pill('All ('+data.companies.length+')','all')
+    +pill('Not entered in BisTrack ('+(data.companies.length-enteredCount)+')','not-entered')
     +'</div>';
-  }).join('');
+  /* Per-company row — name, BT badge, count, tick (if all entered).
+     Clicking opens the company BT modal. */
+  const rowsHtml=visible.map(function(co){
+    const realIdx=data.companies.indexOf(co);
+    const btBadge=co.btCode
+      ?'<span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#0c447c;background:#eef4fb;padding:1px 6px;border-radius:3px;margin-left:8px;">'+esc(co.btCode)+'</span>'
+      :'<span style="font-size:11px;color:#c77;margin-left:8px;">BT not linked</span>';
+    const tick=co.allEntered
+      ?'<span style="display:inline-flex;align-items:center;gap:4px;color:#3b6d11;font-size:11px;font-weight:600;margin-left:8px;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3 3 7-7"/></svg>Entered</span>'
+      :'';
+    const rowStyle='display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border:1px solid #e8e8e4;border-radius:8px;background:#fff;cursor:pointer;margin-bottom:6px;transition:all 0.15s;';
+    return '<div style="'+rowStyle+'" onclick="showCompanyBtModal('+realIdx+')" onmouseover="this.style.borderColor=\'#b5d4f4\';this.style.background=\'#fafcff\'" onmouseout="this.style.borderColor=\'#e8e8e4\';this.style.background=\'#fff\'">'
+      +'<div style="flex:1;min-width:0;font-size:13px;font-weight:500;color:#222;">'+esc(co.name)+btBadge+tick+'</div>'
+      +'<div style="font-size:12px;color:#666;flex-shrink:0;">'+co.count+' entr'+(co.count===1?'y':'ies')+'</div>'
+      +'</div>';
+  }).join('')||'<div style="color:#888;font-size:12px;padding:14px;text-align:center;">Nothing matches the current filter.</div>';
   previewBody.innerHTML=''
-    +'<div style="margin-bottom:10px;font-size:12px;color:#555;"><strong>'+data.totalEntries+'</strong> entr'+(data.totalEntries===1?'y':'ies')+' across <strong>'+data.companies.length+'</strong> compan'+(data.companies.length===1?'y':'ies')+'. Each company exports as one row with all activity in a single cell.</div>'
-    +'<div style="max-height:480px;overflow:auto;">'+cardsHtml+'</div>';
+    +'<div style="margin-bottom:10px;font-size:12px;color:#555;"><strong>'+data.totalEntries+'</strong> entr'+(data.totalEntries===1?'y':'ies')+' across <strong>'+data.companies.length+'</strong> compan'+(data.companies.length===1?'y':'ies')+'. Click any row to copy that company\'s activity to BisTrack.</div>'
+    +pillRow
+    +'<div style="max-height:480px;overflow:auto;">'+rowsHtml+'</div>';
   btn.disabled=data.totalEntries===0;
 }
-/* Phase 8v-3t: copy a single company's consolidated block to the clipboard.
-   Used by the "Copy block" button on each preview card so Richard can paste
-   straight into a BisTrack notepad. */
-function copyCompanyBlock(idx){
+/* Phase 8v-3u: open the per-company BisTrack copy modal. */
+let rptCurrentCoIdx=null;
+let rptCurrentCoBodyCopied=false;
+function showCompanyBtModal(idx){
   const data=window.__rptPreview;
   if(!data||!data.companies||!data.companies[idx])return;
-  const block=data.companies[idx].block||'';
-  const flash=function(ok){
-    /* Find the originating button by event.currentTarget if available, else
-       fall back to a heuristic: any [Copy block] button on the page that's
-       currently focused. */
-    const btn=(event&&event.currentTarget)||null;
-    if(btn){
-      const orig=btn.textContent;
-      btn.textContent=ok?'Copied ✓':'Copy failed';
-      btn.disabled=true;
-      setTimeout(function(){btn.textContent=orig;btn.disabled=false;},1200);
+  const co=data.companies[idx];
+  rptCurrentCoIdx=idx;
+  rptCurrentCoBodyCopied=false;
+  const btBadge=co.btCode
+    ?'BT code <strong style="font-family:ui-monospace,Menlo,Consolas,monospace;color:#0c447c;">'+esc(co.btCode)+'</strong>'
+    :'<span style="color:#c77;">BT code not yet linked</span>';
+  document.getElementById('cbt-meta').innerHTML='<strong>'+esc(co.name)+'</strong> · '+btBadge+' · '+co.count+' entr'+(co.count===1?'y':'ies');
+  document.getElementById('cbt-btcode').value=co.btCode||'';
+  document.getElementById('cbt-body').value=co.block||'';
+  ['cbt-copy-btcode','cbt-copy-body'].forEach(function(id){
+    const b=document.getElementById(id);
+    if(!b)return;
+    b.classList.remove('copied');
+    const key=id==='cbt-copy-btcode'?'1':'2';
+    b.innerHTML='Copy <span class="bt-kbd">'+key+'</span>';
+  });
+  renderCompanyBtEnteredRow();
+  document.getElementById('company-bt-modal').classList.add('open');
+}
+function hideCompanyBtModal(){
+  document.getElementById('company-bt-modal').classList.remove('open');
+  rptCurrentCoIdx=null;
+}
+function renderCompanyBtEnteredRow(){
+  const row=document.getElementById('cbt-entered-row');
+  const hint=document.getElementById('cbt-entered-hint');
+  if(!row||rptCurrentCoIdx===null)return;
+  const data=window.__rptPreview;
+  const co=data&&data.companies&&data.companies[rptCurrentCoIdx];
+  if(!co)return;
+  const on=_isCompanyAllEntered(co);
+  row.classList.toggle('on',on);
+  if(hint)hint.textContent=on?'ticked — excluded from "Not entered" view':'ticks when the note body is copied';
+}
+function toggleCurrentCompanyEntered(){
+  const data=window.__rptPreview;
+  const co=data&&data.companies&&data.companies[rptCurrentCoIdx];
+  if(!co)return;
+  const was=_isCompanyAllEntered(co);
+  _setCompanyEnteredAll(co,!was);
+  renderCompanyBtEnteredRow();
+  previewTimelineReport();
+  /* previewTimelineReport rebuilds the data object — the open modal still
+     points at the old reference. Refresh the open modal so the badge stays
+     consistent. */
+  const fresh=window.__rptPreview&&window.__rptPreview.companies&&window.__rptPreview.companies[rptCurrentCoIdx];
+  if(fresh&&fresh.name===co.name){/* same index still maps to same company */}
+  else{rptCurrentCoIdx=null;hideCompanyBtModal();}
+}
+/* Copy BT code or block body. Body copy auto-ticks the entered flag the
+   first time it's copied. */
+function copyCompanyBtField(which){
+  const inp=document.getElementById(which==='btcode'?'cbt-btcode':'cbt-body');
+  if(!inp)return;
+  const text=inp.value||'';
+  const btnId='cbt-copy-'+which;
+  const btn=document.getElementById(btnId);
+  const key=which==='btcode'?'1':'2';
+  const flash=function(){
+    if(!btn)return;
+    btn.classList.add('copied');
+    btn.innerHTML='Copied <span class="bt-kbd">'+key+'</span>';
+    setTimeout(function(){
+      btn.classList.remove('copied');
+      btn.innerHTML='Copy <span class="bt-kbd">'+key+'</span>';
+    },1400);
+    if(which==='body'&&!rptCurrentCoBodyCopied){
+      rptCurrentCoBodyCopied=true;
+      const data=window.__rptPreview;
+      const co=data&&data.companies&&data.companies[rptCurrentCoIdx];
+      if(co&&!_isCompanyAllEntered(co)){
+        _setCompanyEnteredAll(co,true);
+        renderCompanyBtEnteredRow();
+        previewTimelineReport();
+      }
     }
   };
   if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(block).then(function(){flash(true);}).catch(function(){flash(bistrackFallbackCopy(block));});
+    navigator.clipboard.writeText(text).then(flash).catch(function(){if(bistrackFallbackCopy(text))flash();});
   }else{
-    flash(bistrackFallbackCopy(block));
+    if(bistrackFallbackCopy(text))flash();
   }
 }
+/* Phase 8v-3t legacy: kept for any callers still wired to it. The new
+   preview routes everything through showCompanyBtModal. */
+function copyCompanyBlock(idx){showCompanyBtModal(idx);}
 /* Short date for the entry list: DD MMM (no year to keep row compact) */
 function fmtDateShort(iso){
   if(!iso)return '';
@@ -9197,6 +9362,17 @@ document.addEventListener('keydown',function(ev){
   else if(ev.key==='3'){ev.preventDefault();copyBistrackField('body');}
   else if(ev.key==='Escape'){ev.preventDefault();hideBistrackCopy();}
 });
+/* Phase 8v-3u: keyboard shortcuts for the company-level modal — 1 copies
+   BT code, 2 copies body, Esc closes. */
+document.addEventListener('keydown',function(ev){
+  const modal=document.getElementById('company-bt-modal');
+  if(!modal||!modal.classList.contains('open'))return;
+  const t=ev.target;
+  if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA')&&!t.readOnly)return;
+  if(ev.key==='1'){ev.preventDefault();copyCompanyBtField('btcode');}
+  else if(ev.key==='2'){ev.preventDefault();copyCompanyBtField('body');}
+  else if(ev.key==='Escape'){ev.preventDefault();hideCompanyBtModal();}
+});
 function generateTimelineReportXlsx(){
   const s=document.getElementById('rpt-tl-start').value;
   const e=document.getElementById('rpt-tl-end').value;
@@ -9212,21 +9388,35 @@ function generateTimelineReportXlsx(){
     hint.className='rpt-hint err';
     return;
   }
+  /* Phase 8v-3u: respect the "Not entered in BisTrack" preview filter so
+     the Excel matches what the user sees on screen. */
+  let excluded=0;
+  const exportCompanies=data.companies.filter(function(co){
+    const entered=_isCompanyAllEntered(co);
+    if(rptCompanyFilter==='not-entered'&&entered){excluded++;return false;}
+    return true;
+  });
+  if(!exportCompanies.length){
+    hint.textContent='Everything in this range is already marked entered in BisTrack — nothing to export under the current filter.';
+    hint.className='rpt-hint err';
+    return;
+  }
   /* Phase 8v-3t: one row per company. Activity column is a single cell
      with multi-line text (\n-separated). Wrap text enabled so all lines
      are visible. */
   const aoa=[];
   aoa.push(['SPP Timeline Report']);
-  aoa.push(['Range: '+fmtDate(s)+' to '+fmtDate(e)]);
-  aoa.push(['Generated: '+new Date().toLocaleString('en-GB')+' by '+ME]);
+  aoa.push(['Range: '+fmtDate(s)+' to '+fmtDate(e)+(rptCompanyFilter==='not-entered'?' · not-entered only':'')]);
+  aoa.push(['Generated: '+new Date().toLocaleString('en-GB')+' by '+ME+(excluded?' · '+excluded+' compan'+(excluded===1?'y':'ies')+' excluded (already entered)':'')]);
   aoa.push([]);
   const colHeaders=['Company','Type','Assigned rep','BT code','Entries','Activity'];
   aoa.push(colHeaders);
-  data.companies.forEach(function(co){
+  exportCompanies.forEach(function(co){
     aoa.push([co.name,co.type||'',co.rep||'',co.btCode||'',co.count,co.block]);
   });
   aoa.push([]);
-  aoa.push(['Totals',data.totalEntries+' entries',data.companies.length+' companies']);
+  const exportTotalEntries=exportCompanies.reduce(function(n,co){return n+co.count;},0);
+  aoa.push(['Totals',exportTotalEntries+' entries',exportCompanies.length+' companies']);
 
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[
@@ -9241,7 +9431,7 @@ function generateTimelineReportXlsx(){
   ws['!merges'].push({s:{r:0,c:0},e:{r:0,c:5}});
   ws['!merges'].push({s:{r:1,c:0},e:{r:1,c:5}});
   ws['!merges'].push({s:{r:2,c:0},e:{r:2,c:5}});
-  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:4,c:0},e:{r:4+data.companies.length,c:5}})};
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:4,c:0},e:{r:4+exportCompanies.length,c:5}})};
   const titleStyle={font:{bold:true,sz:14}};
   const boldStyle={font:{bold:true,sz:12}};
   const hdrStyle={font:{bold:true,sz:11,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1A1A18'}}};
@@ -9256,9 +9446,9 @@ function generateTimelineReportXlsx(){
   /* Set row heights + wrap-text on every company data row so multi-line
      Activity cells display all lines without manual resizing. */
   ws['!rows']=ws['!rows']||[];
-  for(let i=0;i<data.companies.length;i++){
+  for(let i=0;i<exportCompanies.length;i++){
     const r=5+i;
-    const co=data.companies[i];
+    const co=exportCompanies[i];
     const lineCount=Math.max(1,(co.block||'').split('\n').length);
     /* ~15pt per line, capped at 400 so a really chatty company doesn't
        create an unreadable mega-row. */
@@ -9687,7 +9877,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08p · timeline-report-per-company','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08q · report-list-modal-filter','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
