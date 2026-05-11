@@ -704,7 +704,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08q · report-list-modal-filter</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08s · pipeline-due-by-onlyme</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -980,13 +980,61 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           </div>
         </div>
 
-        <div class="rpt-card rpt-card-stub">
+        <!-- Phase 8v-3w: Pipeline snapshot — projects due BY a chosen
+             quarter (inclusive). Lists project ref, name, architect,
+             main contractor, sub-contractors, last updated, products,
+             project types. -->
+        <div class="rpt-card">
           <div class="rpt-card-hd">
             <div>
-              <div class="rpt-card-title">Pipeline snapshot <span class="rpt-soon">Coming soon</span></div>
-              <div class="rpt-card-sub">Stage-by-stage project values, win/loss rates, and rep performance over a period.</div>
+              <div class="rpt-card-title">Pipeline snapshot</div>
+              <div class="rpt-card-sub">Projects due by the end of the chosen quarter — capacity planning + pre-build chasing.</div>
             </div>
-            <span class="rpt-card-tag">Scheduled</span>
+            <span class="rpt-card-tag">Manual</span>
+          </div>
+          <div class="rpt-form">
+            <div class="rpt-row">
+              <div class="rpt-field">
+                <label>Year</label>
+                <select id="rpt-pl-year" class="rpt-inp" onchange="previewPipelineReport()"></select>
+              </div>
+              <div class="rpt-field">
+                <label>Quarter</label>
+                <select id="rpt-pl-quarter" class="rpt-inp" onchange="previewPipelineReport()">
+                  <option value="1">Q1 (Jan-Mar)</option>
+                  <option value="2">Q2 (Apr-Jun)</option>
+                  <option value="3">Q3 (Jul-Sep)</option>
+                  <option value="4" selected>Q4 (Oct-Dec)</option>
+                </select>
+              </div>
+              <div class="rpt-field">
+                <label>Quick pick</label>
+                <div class="rpt-quick">
+                  <button onclick="setPipelineQuickPick('thisQ')">This quarter</button>
+                  <button onclick="setPipelineQuickPick('nextQ')">Next quarter</button>
+                  <button onclick="setPipelineQuickPick('endThisYear')">End of this year</button>
+                  <button onclick="setPipelineQuickPick('endNextYear')">End of next year</button>
+                </div>
+              </div>
+              <div class="rpt-field">
+                <label>Scope</label>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:#444;">
+                  <input type="checkbox" id="rpt-pl-onlyme" onchange="previewPipelineReport()"/>
+                  Only my projects
+                </label>
+              </div>
+            </div>
+            <div class="rpt-preview" id="rpt-pl-preview">
+              <div class="rpt-preview-hd">Preview</div>
+              <div class="rpt-preview-body">Pick a quarter to see which projects are due before it.</div>
+            </div>
+            <div class="rpt-actions">
+              <button class="btn btn-primary" id="rpt-pl-gen" onclick="generatePipelineReportXlsx()" disabled>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-right:6px;vertical-align:-2px;"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>
+                Generate Excel (.xlsx)
+              </button>
+              <span class="rpt-hint" id="rpt-pl-hint"></span>
+            </div>
           </div>
         </div>
 
@@ -7619,7 +7667,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08q · report-list-modal-filter'
+      build:'2026-05-08s · pipeline-due-by-onlyme'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7784,7 +7832,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08q · report-list-modal-filter';
+const BACKUP_BUILD='2026-05-08s · pipeline-due-by-onlyme';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8906,6 +8954,8 @@ function initReportsScreen(){
   if(s&&!s.value)s.value=startIso;
   if(e&&!e.value)e.value=endIso;
   previewTimelineReport();
+  /* Phase 8v-3v: also init the pipeline-snapshot card. */
+  try{initPipelineReport();}catch(err){}
 }
 function setReportRange(n){
   const end=new Date();
@@ -8985,7 +9035,9 @@ function buildTimelineReportData(startIso,endIso){
       return da.localeCompare(db);
     });
     const lines=inRange.map(_formatTimelineLine);
-    const block=lines.join('\n');
+    /* Phase 8v-3v: double-newline between entries so the BisTrack notepad
+       paste has a blank line between each — easier to read. */
+    const block=lines.join('\n\n');
     totalEntries+=inRange.length;
     companies.push({
       name:co.name,
@@ -9467,6 +9519,295 @@ function generateTimelineReportXlsx(){
   hint.textContent='✓ Downloaded '+filename;
   hint.className='rpt-hint ok';
 }
+/* ===== Phase 8v-3v: Pipeline snapshot report ===== */
+function initPipelineReport(){
+  const ySel=document.getElementById('rpt-pl-year');
+  if(!ySel)return;
+  if(!ySel.options.length){
+    const now=new Date().getFullYear();
+    /* Cover this year and the next 6 — building schedules rarely look
+       further out than that. */
+    for(let y=now;y<=now+6;y++){
+      const o=document.createElement('option');
+      o.value=String(y);o.textContent=String(y);
+      ySel.appendChild(o);
+    }
+    /* Default selection: current year if not set already. */
+    ySel.value=String(now);
+  }
+  /* Default quarter: current quarter +1 (so the report shows "due before
+     next quarter" — a natural "what should I be chasing now?" view). */
+  const qSel=document.getElementById('rpt-pl-quarter');
+  if(qSel&&!qSel.dataset.touched){
+    const curQ=Math.floor(new Date().getMonth()/3)+1; /* 1..4 */
+    const nextQ=curQ===4?1:curQ+1;
+    qSel.value=String(nextQ);
+    if(nextQ===1)ySel.value=String(new Date().getFullYear()+1);
+  }
+  previewPipelineReport();
+}
+function setPipelineQuickPick(kind){
+  const ySel=document.getElementById('rpt-pl-year');
+  const qSel=document.getElementById('rpt-pl-quarter');
+  if(!ySel||!qSel)return;
+  const now=new Date();
+  const curY=now.getFullYear();
+  const curQ=Math.floor(now.getMonth()/3)+1;
+  let y=curY,q=curQ;
+  if(kind==='thisQ'){y=curY;q=curQ;}
+  else if(kind==='nextQ'){q=curQ===4?1:curQ+1;y=q===1?curY+1:curY;}
+  else if(kind==='endThisYear'){y=curY;q=4;}
+  else if(kind==='endNextYear'){y=curY+1;q=4;}
+  /* Make sure the picked year is in the dropdown — extend if not. */
+  if(![...ySel.options].some(function(o){return o.value===String(y);})){
+    const o=document.createElement('option');o.value=String(y);o.textContent=String(y);
+    ySel.appendChild(o);
+  }
+  ySel.value=String(y);
+  qSel.value=String(q);
+  qSel.dataset.touched='1';
+  previewPipelineReport();
+}
+/* Phase 8v-3v: project's expected-build comparable date (first of the
+   expected month). Returns null if month/year not both set. */
+function _projectExpectedBuildIso(p){
+  if(!p)return null;
+  const m=Number(p.expectedBuildMonth);
+  const y=Number(p.expectedBuildYear);
+  if(!m||!y||m<1||m>12||y<1900)return null;
+  return y+'-'+String(m).padStart(2,'0')+'-01';
+}
+/* Phase 8v-3v: union of all tags on a project — products + projectTypes. */
+function _projectTagsLabel(p){
+  const tags=[];
+  if(Array.isArray(p.products))p.products.forEach(function(t){if(t)tags.push(String(t));});
+  if(Array.isArray(p.projectTypes))p.projectTypes.forEach(function(t){if(t)tags.push(String(t));});
+  return tags.join(', ');
+}
+/* Phase 8v-3w: union the legacy text field for a single role
+   (architect / contractor / subs[]) with every contact tagged that role,
+   case-insensitively de-duplicated. Returns a comma-separated string. */
+function _projectCompaniesByRole(p,role){
+  const ordered=[];
+  const seen=new Set();
+  const push=function(s){
+    if(!s)return;
+    const k=String(s).trim().toLowerCase();
+    if(!k||seen.has(k))return;
+    seen.add(k);ordered.push(s);
+  };
+  if(role==='architect'){
+    push(p.architect);
+  }else if(role==='mc'){
+    push(p.contractor);
+  }else if(role==='sub'){
+    if(Array.isArray(p.subs))p.subs.forEach(push);
+  }
+  if(Array.isArray(p.contacts)){
+    for(const c of p.contacts){
+      if(c&&c.company&&c.type===role)push(c.company);
+    }
+  }
+  return ordered.join(', ');
+}
+/* Phase 8v-3w: build the Pipeline dataset. Cutoff is now INCLUSIVE of the
+   selected quarter — "due by Q4 2027" = anything dated up to and including
+   Dec 2027. Cutoff iso = first day of the NEXT quarter (1 Jan 2028 for Q4).
+   The comparison stays expectedBuild < cutoff. Options:
+   - onlyMe: when true, only projects whose salesRep matches ME are returned. */
+function buildPipelineReportData(year,quarter,opts){
+  const y=Number(year),q=Number(quarter);
+  if(!y||!q||q<1||q>4)return {projects:[],cutoffLabel:'',cutoffIso:'',err:'Pick a year and quarter.'};
+  /* Quarter end month = q*3 (3, 6, 9, 12). Cutoff = start of next quarter. */
+  let cutoffY=y;
+  let cutoffM=q*3+1; /* 4, 7, 10, 13 */
+  if(cutoffM>12){cutoffM=1;cutoffY=y+1;}
+  const cutoffIso=cutoffY+'-'+String(cutoffM).padStart(2,'0')+'-01';
+  const cutoffLabel='Q'+q+' '+y;
+  const onlyMe=!!(opts&&opts.onlyMe);
+  const rows=[];
+  for(const p of projects||[]){
+    if(p.stage==='won'||p.stage==='lost')continue;
+    if(onlyMe&&p.salesRep!==ME)continue;
+    const buildIso=_projectExpectedBuildIso(p);
+    if(!buildIso)continue;
+    if(buildIso>=cutoffIso)continue;
+    rows.push({
+      id:p.id,
+      ref:p.ref||'',
+      name:p.name||'',
+      addr:p.addr||'',
+      stage:p.stage||'',
+      architect:_projectCompaniesByRole(p,'architect'),
+      mainContractor:_projectCompaniesByRole(p,'mc'),
+      subContractor:_projectCompaniesByRole(p,'sub'),
+      expectedBuildMonth:p.expectedBuildMonth,
+      expectedBuildYear:p.expectedBuildYear,
+      expectedBuildIso:buildIso,
+      lastUpdated:p.lastUpdated||'',
+      salesRep:p.salesRep||'',
+      products:Array.isArray(p.products)?p.products.filter(Boolean).join(', '):'',
+      projectTypes:Array.isArray(p.projectTypes)?p.projectTypes.filter(Boolean).join(', '):''
+    });
+  }
+  /* Phase 8v-3w: sort logic.
+     - When Only-me is off and multiple reps have projects, group by rep
+       alphabetically, then within each rep sort by expectedBuild ascending.
+     - When Only-me is on (or only one rep present), straight ascending by
+       expectedBuild. */
+  const reps=[...new Set(rows.map(function(r){return r.salesRep||'';}))];
+  if(!onlyMe&&reps.length>1){
+    rows.sort(function(a,b){
+      const repCmp=(a.salesRep||'~').localeCompare(b.salesRep||'~');
+      if(repCmp!==0)return repCmp;
+      return (a.expectedBuildIso||'').localeCompare(b.expectedBuildIso||'');
+    });
+  }else{
+    rows.sort(function(a,b){return (a.expectedBuildIso||'').localeCompare(b.expectedBuildIso||'');});
+  }
+  return {projects:rows,cutoffIso,cutoffLabel,reps,err:null};
+}
+function previewPipelineReport(){
+  const ySel=document.getElementById('rpt-pl-year');
+  const qSel=document.getElementById('rpt-pl-quarter');
+  const meCb=document.getElementById('rpt-pl-onlyme');
+  const btn=document.getElementById('rpt-pl-gen');
+  const previewBody=document.querySelector('#rpt-pl-preview .rpt-preview-body');
+  const hint=document.getElementById('rpt-pl-hint');
+  if(!previewBody||!btn||!ySel||!qSel)return;
+  hint.textContent='';hint.className='rpt-hint';
+  const onlyMe=!!(meCb&&meCb.checked);
+  const data=buildPipelineReportData(ySel.value,qSel.value,{onlyMe:onlyMe});
+  window.__rptPipeline=data;
+  if(data.err){
+    previewBody.innerHTML='<span style="color:#c0392b;">'+esc(data.err)+'</span>';
+    btn.disabled=true;
+    return;
+  }
+  if(!data.projects.length){
+    const noun=onlyMe?'projects assigned to you':'active projects';
+    previewBody.innerHTML='No '+noun+' due by '+esc(data.cutoffLabel)+'. Either no expected-build dates are set, or every dated project is past the cutoff.';
+    btn.disabled=true;
+    return;
+  }
+  /* Phase 8v-3w: when multiple reps are present and Only-me is off, group
+     the preview by rep with a sub-heading. */
+  const showGroups=!onlyMe&&data.reps.length>1;
+  const renderRow=function(r){
+    const bld=MONTHS[r.expectedBuildMonth-1]+' '+r.expectedBuildYear;
+    const lastUpd=r.lastUpdated?(fmtDate(r.lastUpdated)||r.lastUpdated):'—';
+    const archTxt=r.architect||'<span style="color:#aaa;">—</span>';
+    const mcTxt=r.mainContractor||'<span style="color:#aaa;">—</span>';
+    const subTxt=r.subContractor||'<span style="color:#aaa;">—</span>';
+    const products=r.products?'<span style="color:#0c447c;">'+esc(r.products)+'</span>':'<span style="color:#bbb;">—</span>';
+    const types=r.projectTypes?'<span style="color:#0c447c;">'+esc(r.projectTypes)+'</span>':'<span style="color:#bbb;">—</span>';
+    return '<div style="display:grid;grid-template-columns:1.2fr 1.3fr 1.3fr 1.3fr 1fr 1fr 1fr 1fr;gap:8px;align-items:center;padding:8px 10px;border:1px solid #e8e8e4;border-radius:6px;background:#fff;margin-bottom:5px;font-size:11.5px;">'
+      +'<div><div style="font-size:10px;color:#888;">'+esc(r.ref)+'</div><div style="font-weight:600;">'+esc(r.name)+'</div></div>'
+      +'<div style="color:#444;"><div style="font-size:10px;color:#888;">Architect</div>'+archTxt+'</div>'
+      +'<div style="color:#444;"><div style="font-size:10px;color:#888;">Main contractor</div>'+mcTxt+'</div>'
+      +'<div style="color:#444;"><div style="font-size:10px;color:#888;">Sub-contractor</div>'+subTxt+'</div>'
+      +'<div style="color:#444;"><div style="font-size:10px;color:#888;">Build</div>'+esc(bld)+'</div>'
+      +'<div style="color:#444;"><div style="font-size:10px;color:#888;">Updated</div>'+esc(lastUpd)+'</div>'
+      +'<div><div style="font-size:10px;color:#888;">Products</div>'+products+'</div>'
+      +'<div><div style="font-size:10px;color:#888;">Project types</div>'+types+'</div>'
+      +'</div>';
+  };
+  let rows;
+  if(showGroups){
+    /* Group rows by rep (already sorted that way in the builder). */
+    const grouped={};
+    const order=[];
+    data.projects.forEach(function(r){
+      const rep=r.salesRep||'Unassigned';
+      if(!grouped[rep]){grouped[rep]=[];order.push(rep);}
+      grouped[rep].push(r);
+    });
+    rows=order.map(function(rep){
+      const hdr='<div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin:14px 0 6px;border-bottom:1px solid #ebeef2;padding-bottom:4px;">'+esc(rep)+' — '+grouped[rep].length+' project'+(grouped[rep].length===1?'':'s')+'</div>';
+      return hdr+grouped[rep].map(renderRow).join('');
+    }).join('');
+  }else{
+    rows=data.projects.map(renderRow).join('');
+  }
+  const scopeText=onlyMe?' (only your projects)':'';
+  previewBody.innerHTML=''
+    +'<div style="margin-bottom:10px;font-size:12px;color:#555;"><strong>'+data.projects.length+'</strong> project'+(data.projects.length===1?'':'s')+' due by <strong>'+esc(data.cutoffLabel)+'</strong> (cutoff: end of '+MONTHS[(Number(qSel.value)-1)*3+2]+' '+ySel.value+')'+esc(scopeText)+'.</div>'
+    +'<div style="max-height:480px;overflow:auto;">'+rows+'</div>';
+  btn.disabled=data.projects.length===0;
+}
+function generatePipelineReportXlsx(){
+  const ySel=document.getElementById('rpt-pl-year');
+  const qSel=document.getElementById('rpt-pl-quarter');
+  const meCb=document.getElementById('rpt-pl-onlyme');
+  const hint=document.getElementById('rpt-pl-hint');
+  const onlyMe=!!(meCb&&meCb.checked);
+  const data=buildPipelineReportData(ySel.value,qSel.value,{onlyMe:onlyMe});
+  if(data.err||!data.projects.length){
+    hint.textContent=data.err||'Nothing to export — no projects in this window.';
+    hint.className='rpt-hint err';
+    return;
+  }
+  if(typeof XLSX==='undefined'){
+    hint.textContent='Excel library failed to load — check your internet connection.';
+    hint.className='rpt-hint err';
+    return;
+  }
+  const aoa=[];
+  aoa.push(['SPP Pipeline Snapshot']);
+  aoa.push(['Projects due by '+data.cutoffLabel+' (up to end of '+MONTHS[(Number(qSel.value)-1)*3+2]+' '+ySel.value+')'+(onlyMe?' · only your projects':'')]);
+  aoa.push(['Generated: '+new Date().toLocaleString('en-GB')+' by '+ME]);
+  aoa.push([]);
+  const colHeaders=['Ref','Project name','Address','Stage','Sales rep','Architect','Main contractor','Sub-contractor','Expected build','Last updated','Products','Project types'];
+  aoa.push(colHeaders);
+  data.projects.forEach(function(r){
+    const bld=MONTHS[r.expectedBuildMonth-1]+' '+r.expectedBuildYear;
+    aoa.push([
+      r.ref,r.name,r.addr,r.stage,r.salesRep,
+      r.architect,r.mainContractor,r.subContractor,
+      bld,r.lastUpdated?(fmtDate(r.lastUpdated)||r.lastUpdated):'',
+      r.products,r.projectTypes
+    ]);
+  });
+  aoa.push([]);
+  aoa.push(['Totals',data.projects.length+' projects']);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[
+    {wch:14}, /* Ref */
+    {wch:30}, /* Name */
+    {wch:30}, /* Address */
+    {wch:10}, /* Stage */
+    {wch:18}, /* Sales rep */
+    {wch:24}, /* Architect */
+    {wch:24}, /* Main contractor */
+    {wch:30}, /* Sub-contractor */
+    {wch:16}, /* Expected build */
+    {wch:14}, /* Last updated */
+    {wch:30}, /* Products */
+    {wch:30}  /* Project types */
+  ];
+  ws['!merges']=ws['!merges']||[];
+  ws['!merges'].push({s:{r:0,c:0},e:{r:0,c:11}});
+  ws['!merges'].push({s:{r:1,c:0},e:{r:1,c:11}});
+  ws['!merges'].push({s:{r:2,c:0},e:{r:2,c:11}});
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:4,c:0},e:{r:4+data.projects.length,c:11}})};
+  const titleStyle={font:{bold:true,sz:14}};
+  const boldStyle={font:{bold:true,sz:12}};
+  const hdrStyle={font:{bold:true,sz:11,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1A1A18'}}};
+  const setStyle=function(addr,st){if(ws[addr])ws[addr].s=Object.assign({},ws[addr].s||{},st);};
+  setStyle('A1',titleStyle);
+  setStyle('A2',boldStyle);
+  setStyle('A3',{font:{italic:true,sz:10,color:{rgb:'888888'}}});
+  for(let c=0;c<colHeaders.length;c++){
+    setStyle(XLSX.utils.encode_cell({r:4,c}),hdrStyle);
+  }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Pipeline');
+  const scopeTag=onlyMe?'_only-me':'';
+  const filename='SPP_Pipeline_by_'+data.cutoffLabel.replace(/\s+/g,'')+scopeTag+'.xlsx';
+  XLSX.writeFile(wb,filename);
+  hint.textContent='✓ Downloaded '+filename;
+  hint.className='rpt-hint ok';
+}
 /* ------------------------- END REPORTS ------------------------- */
 
 /* Admin */
@@ -9877,7 +10218,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08q · report-list-modal-filter','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08s · pipeline-due-by-onlyme','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
