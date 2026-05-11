@@ -695,7 +695,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08j · contact-card-editable</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08k · companies-stats-toaction</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -833,6 +833,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
   <div class="screen">
     <div class="dash-content">
+      <!-- Phase 8v-3o: three stat cards mirroring the Active Projects screen
+           treatment. Card 1 = all, card 2 = companies linked to a spec/
+           quoting project, card 3 = companies with no project/note/reminder
+           activity in 90 days. Click any card to filter the list. -->
+      <div class="stats-row" style="grid-template-columns:repeat(3,1fr);">
+        <div class="stat-card info" onclick="setCompanyView('all',this)" style="cursor:pointer;"><div class="stat-icon info"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#185fa5" stroke-width="1.5"><path d="M2 14V5l6-3 6 3v9"/><path d="M6 14V8h4v6"/></svg></div><div class="stat-label">All companies</div><div class="stat-val" id="cco-stat-all">0</div><div class="stat-sub">Architects, MCs, subs &amp; other</div></div>
+        <div class="stat-card success" onclick="setCompanyView('active',this)" style="cursor:pointer;"><div class="stat-icon success"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#3b6d11" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 8h6M8 5v6"/></svg></div><div class="stat-label">Companies with active projects</div><div class="stat-val" id="cco-stat-active">0</div><div class="stat-sub">Linked to spec or quoting</div></div>
+        <div class="stat-card warn" onclick="setCompanyView('stale',this)" style="cursor:pointer;"><div class="stat-icon warn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ba7517" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1"/></svg></div><div class="stat-label">Not amended in 90 days</div><div class="stat-val" id="cco-stat-stale">0</div><div class="stat-sub">No new project, note or reminder</div></div>
+      </div>
+      <!-- Phase 8v-3o: company reminders to-action panel. Same pattern as
+           dashboard chase queue. Open / Snooze 3 days / Mark done. -->
+      <div class="chase-queue" id="cco-chase-queue">
+        <div class="chase-header">
+          <div class="chase-title">To action <span class="chase-count empty" id="cco-chase-count-badge">0</span></div>
+          <div class="chase-sub">Company-level reminders that are overdue or due in the next 7 days.</div>
+        </div>
+        <div class="chase-list" id="cco-chase-list"></div>
+      </div>
       <div class="section-hdr">
         <div class="section-title" id="co-list-label">All companies</div>
       </div>
@@ -7248,7 +7266,10 @@ function parseDateText(s){
    architect/contractor role fallback).
    ====================================================================== */
 let currentCompany=null;       // the company name currently open in detail
-let companyFilter='all';       // list filter: all|architect|mc|sub
+let companyFilter='all';       // type filter: all|architect|mc|sub
+/* Phase 8v-3o: activity filter set by the new stat cards. Orthogonal to
+   companyFilter so a user can have "MC" type + "Active projects" activity. */
+let companyView='all';         // activity filter: all|active|stale
 let currentCompanyTab='details';
 let companyTimelineFilter='all'; // 'all', 'company', or a specific projectId
 /* Layout variants: 'classic' (4 tabs), 'compact' (2 tabs), 'scroll' (single page), 'split' (two-column). */
@@ -7441,7 +7462,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08j · contact-card-editable'
+      build:'2026-05-08k · companies-stats-toaction'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7606,7 +7627,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08j · contact-card-editable';
+const BACKUP_BUILD='2026-05-08k · companies-stats-toaction';
 function exportBackup(){
   const payload={
     _meta:{
@@ -7802,18 +7823,185 @@ function companyInitials(name){
   return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
 }
 
+/* Phase 8v-3o: predicates for the new company activity filters. Active =
+   the company is linked to at least one project in spec or quoting stage.
+   Stale = no activity (project update, note, or reminder) in 90 days. */
+function _companyHasActiveProject(co){
+  if(!co||!Array.isArray(co.projects))return false;
+  return co.projects.some(function(p){return p.stage==='spec'||p.stage==='quoting';});
+}
+/* Most recent activity timestamp for a company. Looks at:
+   - lastUpdated on every linked project (via the live `projects` array;
+     deriveCompanies strips that field from co.projects, so look it up)
+   - every note's date
+   - every reminder's date
+   Returns YYYY-MM-DD or '' if no activity exists. */
+function _companyLastActivity(co){
+  if(!co)return '';
+  let best='';
+  if(Array.isArray(co.projects)){
+    for(const cp of co.projects){
+      const live=projects.find(function(x){return x.id===cp.id;});
+      if(live&&live.lastUpdated&&live.lastUpdated>best)best=live.lastUpdated;
+    }
+  }
+  if(Array.isArray(co.noteEntries)){
+    for(const n of co.noteEntries){
+      if(n&&n.date&&n.date>best)best=n.date;
+      if(n&&n.reminder&&n.reminder.date&&n.reminder.date>best)best=n.reminder.date;
+    }
+  }
+  return best;
+}
+function _isCompanyStale(co){
+  const last=_companyLastActivity(co);
+  if(!last)return true; /* no activity at all → definitely stale */
+  const ms=Date.now()-new Date(last).getTime();
+  return ms>=90*86400*1000;
+}
+/* Phase 8v-3o: build the company to-action list (reminders due in the next
+   7 days or overdue). Each entry includes the company name (lowercased
+   key + display) and the noteId so action handlers can locate it. */
+function _companyToActionItems(){
+  const today=new Date();
+  const todayIso=today.toISOString().slice(0,10);
+  const cutoff=new Date(today.getTime()+7*86400*1000).toISOString().slice(0,10);
+  const out=[];
+  const all=deriveCompanies();
+  Object.entries(all).forEach(function(pair){
+    const key=pair[0],co=pair[1];
+    (co.noteEntries||[]).forEach(function(n){
+      const rem=n.reminder;
+      if(!rem||rem.done)return;
+      if(!rem.date)return;
+      if(rem.date>cutoff)return;
+      const overdue=rem.date<todayIso;
+      const days=Math.floor((today.getTime()-new Date(rem.date).getTime())/(86400*1000));
+      out.push({
+        companyKey:key,
+        companyName:co.name,
+        noteId:n.id,
+        text:rem.text||'(no text)',
+        notes:n.text||'',
+        date:rem.date,
+        overdue:overdue,
+        days:days
+      });
+    });
+  });
+  out.sort(function(a,b){return a.date.localeCompare(b.date);});
+  return out;
+}
+function _renderCompanyChaseQueue(){
+  const list=document.getElementById('cco-chase-list');
+  const badge=document.getElementById('cco-chase-count-badge');
+  if(!list||!badge)return;
+  const items=_companyToActionItems();
+  badge.textContent=items.length;
+  badge.className='chase-count'+(items.length===0?' empty':'');
+  if(items.length===0){
+    list.innerHTML='<div class="chase-empty">All clear — no company reminders due this week.</div>';
+    return;
+  }
+  list.innerHTML=items.map(function(it){
+    const dateLabel=fmtDate(it.date)||it.date;
+    const ageLabel=it.overdue
+      ?'<span style="color:#a62929;font-weight:600;">'+it.days+' day'+(it.days===1?'':'s')+' overdue</span>'
+      :(it.days===0
+          ?'<span style="color:#a87000;font-weight:600;">Due today</span>'
+          :'<span style="color:#3b6d11;">Due in '+(-it.days)+' day'+(it.days===-1?'':'s')+'</span>');
+    const nameArg=JSON.stringify(it.companyName).replace(/"/g,'&quot;');
+    const noteArg=JSON.stringify(it.noteId||'').replace(/"/g,'&quot;');
+    return '<div class="chase-row">'
+      +'<div>'
+        +'<div class="cq-co">'+esc(it.companyName)+'</div>'
+        +'<div class="cq-rep">Due '+esc(dateLabel)+' · '+ageLabel+'</div>'
+      +'</div>'
+      +'<div>'
+        +'<div class="cq-txt">'+esc(it.text)+'</div>'
+        +(it.notes?'<div class="cq-days" style="color:#777;">'+esc(it.notes.substring(0,140))+(it.notes.length>140?'…':'')+'</div>':'')
+      +'</div>'
+      +'<button class="primary" onclick="companyToActionOpen('+nameArg+')" title="Open company">Open company</button>'
+      +'<button onclick="companyToActionSnooze('+nameArg+','+noteArg+')" title="Marks this reminder done and creates a fresh one for 3 days time">Snooze 3 days</button>'
+      +'<button onclick="companyToActionDone('+nameArg+','+noteArg+')" title="Mark the reminder complete">Mark done</button>'
+      +'</div>';
+  }).join('');
+}
+function companyToActionOpen(name){openCompanyDetail(name);}
+function companyToActionDone(name,noteId){
+  const key=String(name||'').toLowerCase();
+  const ov=companyOverrides[key];
+  if(!ov||!Array.isArray(ov.noteEntries))return;
+  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
+  if(!n||!n.reminder)return;
+  n.reminder.done=true;
+  persistCompanyOverrides();
+  _renderCompanyChaseQueue();
+  if(typeof renderCompanies==='function')renderCompanies(document.getElementById('co-search-box').value||'');
+}
+function companyToActionSnooze(name,noteId){
+  const key=String(name||'').toLowerCase();
+  const ov=companyOverrides[key];
+  if(!ov||!Array.isArray(ov.noteEntries))return;
+  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
+  if(!n||!n.reminder)return;
+  /* Build new dates: +3 days at 10:00 local. */
+  const d=new Date();d.setDate(d.getDate()+3);
+  const newDate=d.toISOString().slice(0,10);
+  const origDateLabel=fmtDate(n.reminder.date)||n.reminder.date||'(no date)';
+  const newText=n.reminder.text||'Follow up';
+  const stitchedNotes=
+    'Snoozed from reminder originally due '+origDateLabel+': "'+(n.reminder.text||'(no text)')+'"\n'
+    +(n.text?'Original note:\n'+n.text:'');
+  /* Mark the original done. */
+  n.reminder.done=true;
+  /* Append a new note + reminder for +3 days. */
+  const newNote={
+    id:uid(),
+    date:newDate,
+    author:ME,
+    text:stitchedNotes,
+    reminder:{text:newText,date:newDate,done:false,snoozedFrom:n.id}
+  };
+  ov.noteEntries.push(newNote);
+  persistCompanyOverrides();
+  _renderCompanyChaseQueue();
+  if(typeof renderCompanies==='function')renderCompanies(document.getElementById('co-search-box').value||'');
+}
+function setCompanyView(v,el){
+  companyView=v||'all';
+  /* Visually highlight the active stat card */
+  document.querySelectorAll('#companies-screen .stat-card').forEach(function(c){c.style.outline='';c.style.outlineOffset='';});
+  if(el){el.style.outline='2px solid #185fa5';el.style.outlineOffset='-2px';}
+  renderCompanies(document.getElementById('co-search-box').value||'');
+}
 function renderCompanies(q){
   const all=deriveCompanies();
   const list=Object.values(all);
+  /* Phase 8v-3o: populate the three stat cards. Counts run across the full
+     company list, independent of the type pill filter. */
+  const cAll=list.length;
+  const cActive=list.filter(_companyHasActiveProject).length;
+  const cStale=list.filter(_isCompanyStale).length;
+  const setStat=function(id,v){const el=document.getElementById(id);if(el)el.textContent=v;};
+  setStat('cco-stat-all',cAll);
+  setStat('cco-stat-active',cActive);
+  setStat('cco-stat-stale',cStale);
+  /* Refresh the to-action queue alongside the list. */
+  try{_renderCompanyChaseQueue();}catch(e){}
   const s=(q||'').toLowerCase();
   const filtered=list.filter(co=>{
     const matchType=companyFilter==='all'||co.type===companyFilter;
     const matchSearch=!s||co.name.toLowerCase().includes(s);
-    return matchType&&matchSearch;
+    let matchView=true;
+    if(companyView==='active')matchView=_companyHasActiveProject(co);
+    else if(companyView==='stale')matchView=_isCompanyStale(co);
+    return matchType&&matchSearch&&matchView;
   });
   filtered.sort((a,b)=>a.name.localeCompare(b.name));
   const labels={all:'All companies',architect:'Architects',mc:'Main contractors',sub:'Sub-contractors'};
-  document.getElementById('co-list-label').textContent=(labels[companyFilter]||'Companies')+' ('+filtered.length+')';
+  const viewLabels={all:'',active:' · with active projects',stale:' · not amended in 90 days'};
+  document.getElementById('co-list-label').textContent=(labels[companyFilter]||'Companies')+(viewLabels[companyView]||'')+' ('+filtered.length+')';
   const wrap=document.getElementById('companies-list');
   if(!filtered.length){
     wrap.innerHTML='<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No companies match this filter.</div>';
@@ -9188,7 +9376,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08j · contact-card-editable','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08k · companies-stats-toaction','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
