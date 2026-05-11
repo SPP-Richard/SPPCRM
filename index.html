@@ -704,7 +704,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08o · company-timeline-types</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08p · timeline-report-per-company</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -7578,7 +7578,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08o · company-timeline-types'
+      build:'2026-05-08p · timeline-report-per-company'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7743,7 +7743,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08o · company-timeline-types';
+const BACKUP_BUILD='2026-05-08p · timeline-report-per-company';
 function exportBackup(){
   const payload={
     _meta:{
@@ -7922,7 +7922,11 @@ function deriveCompanies(){
     /* Feed notes + reminders into the unified timeline. These are company-level
        (no projectId) so the timeline filter can isolate them via value 'company'. */
     co.noteEntries.forEach(n=>{
-      co.timeline.push({type:'note',id:n.id,date:n.date,author:n.author,text:n.text,reminder:n.reminder||null});
+      /* Phase 8v-3t: preserve the noteEntry's type (note / call-in /
+         call-out / meeting) plus time + notes so the timeline export can
+         differentiate calls and meetings. Legacy entries with no type
+         fall through to 'note'. */
+      co.timeline.push({type:n.type||'note',id:n.id,date:n.date,author:n.author,text:n.text,notes:n.notes||'',time:n.time||'',reminder:n.reminder||null});
       if(n.reminder){
         co.timeline.push({type:'reminder',id:n.id,date:n.reminder.date,text:n.reminder.text,done:!!n.reminder.done,author:n.author,noteDate:n.date,noteText:n.text});
       }
@@ -8872,7 +8876,58 @@ function setReportRange(n){
   document.getElementById('rpt-tl-end').value=end.toISOString().slice(0,10);
   previewTimelineReport();
 }
-/* Build the dataset — [{company, entries:[{date,type,author,summary,details,project,ref}...]}] */
+/* Phase 8v-3t: format one timeline entry as a single line for the
+   consolidated per-company block. Examples Richard wants:
+   - "04/05/2026 10:22 - phone call out"
+   - "05/05/2026 - meeting"
+   - "06/05/2026 - note - price 2 new quotes for them"
+   - "07/05/2026 - set reminder - chase price update"   */
+function _formatTimelineLine(t){
+  const date=t.date?toBistrackDate(t.date):'';
+  const time=t.time||'';
+  const datePart=time?date+' '+time:date;
+  let label,text='';
+  switch(t.type){
+    case 'note':
+      label='note';
+      text=(t.text||'').trim();
+      break;
+    case 'call-in':
+      label='phone call in';
+      text=(t.text||'').trim();
+      if(t.notes)text=(text?text+' — ':'')+t.notes.replace(/\s+/g,' ').trim();
+      break;
+    case 'call-out':
+      label='phone call out';
+      text=(t.text||'').trim();
+      if(t.notes)text=(text?text+' — ':'')+t.notes.replace(/\s+/g,' ').trim();
+      break;
+    case 'meeting':
+      label='meeting';
+      text=(t.text||'').trim();
+      if(t.notes)text=(text?text+' — ':'')+t.notes.replace(/\s+/g,' ').trim();
+      break;
+    case 'reminder':
+      label='set reminder';
+      text=(t.text||'').trim();
+      break;
+    case 'email':
+    case undefined:
+    case null:
+      label='email';
+      text=(t.title||t.subject||'').trim();
+      break;
+    default:
+      label=t.type||'entry';
+      text=(t.text||t.title||'').trim();
+  }
+  /* Collapse internal newlines in the text so the consolidated block has
+     exactly one line per entry. */
+  text=text.replace(/\s*\n\s*/g,' / ');
+  return datePart+' - '+label+(text?' - '+text:'');
+}
+/* Build the dataset — one entry per company with a consolidated text block
+   plus the underlying entry list for the preview UI. */
 function buildTimelineReportData(startIso,endIso){
   if(!startIso||!endIso||startIso>endIso)return {companies:[],totalEntries:0,err:'Start date must be on or before end date.'};
   const all=deriveCompanies();
@@ -8881,42 +8936,29 @@ function buildTimelineReportData(startIso,endIso){
   Object.values(all).forEach(co=>{
     const inRange=(co.timeline||[]).filter(t=>(t.date||'')>=startIso&&(t.date||'')<=endIso);
     if(!inRange.length)return;
+    /* Phase 8v-3t: sort chronologically (oldest first) so the consolidated
+       block reads like a diary — early dates at the top. */
+    inRange.sort((a,b)=>{
+      const da=(a.date||'')+(a.time||'');
+      const db=(b.date||'')+(b.time||'');
+      return da.localeCompare(db);
+    });
+    const lines=inRange.map(_formatTimelineLine);
+    const block=lines.join('\n');
     totalEntries+=inRange.length;
-    /* Already newest-first from deriveCompanies, but re-sort defensively */
-    inRange.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    const entries=inRange.map(t=>buildReportRow(t));
-    companies.push({name:co.name,type:typeLabel(co.type),rep:co.rep||'',entries});
+    companies.push({
+      name:co.name,
+      type:typeLabel(co.type),
+      rep:co.rep||'',
+      btCode:(companyOverrides[co.name.toLowerCase()]||{}).btCode||'',
+      count:inRange.length,
+      block:block,
+      lines:lines /* kept for preview rendering */
+    });
   });
-  /* Sort companies alphabetically for predictable output */
+  /* Companies alphabetical for predictable output */
   companies.sort((a,b)=>a.name.localeCompare(b.name));
   return {companies,totalEntries,err:null};
-}
-function buildReportRow(t){
-  const typeLbl=t.type==='note'?'Note':(t.type==='reminder'?'Reminder':'Email');
-  let summary='',details='';
-  if(t.type==='email'||!t.type){
-    summary=t.title||'(no subject)';
-    details=(t.points||[]).map(p=>'• '+p).join('\n');
-  }else if(t.type==='note'){
-    /* Use first line as summary, full text as details */
-    const firstLine=(t.text||'').split('\n')[0];
-    summary=firstLine.length>80?firstLine.slice(0,77)+'…':firstLine;
-    details=t.text||'';
-    if(t.reminder)details+='\n\n[Linked reminder: '+(t.reminder.date||'')+(t.reminder.text?' – '+t.reminder.text:'')+(t.reminder.done?' (done)':'')+']';
-  }else if(t.type==='reminder'){
-    summary='Reminder: '+(t.text||'(no reminder note)');
-    const state=t.done?'Done':'Pending';
-    details='Due: '+(t.date||'')+' · Status: '+state+(t.noteDate?'\nFrom note on '+t.noteDate+': '+(t.noteText||''):'');
-  }
-  return {
-    date:t.date||'',
-    type:typeLbl,
-    author:t.author||'',
-    summary,
-    details,
-    project:t.projectName||'',
-    ref:t.projectRef||''
-  };
 }
 /* ----- Entered-in-BisTrack tracking ----- */
 const BT_ENTERED_KEY='spp.bistrackEntered';
@@ -8959,7 +9001,6 @@ function previewTimelineReport(){
   const hint=document.getElementById('rpt-tl-hint');
   hint.textContent='';hint.className='rpt-hint';
   const data=buildTimelineReportData(s,e);
-  /* Expose current preview data so the Copy-to-BisTrack modal can find entries */
   window.__rptPreview=data;
   if(data.err){
     previewBody.innerHTML='<span style="color:#c0392b;">'+esc(data.err)+'</span>';
@@ -8971,52 +9012,49 @@ function previewTimelineReport(){
     btn.disabled=true;
     return;
   }
-  /* Count entered vs. to-do, and per-type */
-  const types={Email:0,Note:0,Reminder:0};
-  let enteredCount=0,toDoCount=0;
-  data.companies.forEach(c=>c.entries.forEach(en=>{
-    types[en.type]=(types[en.type]||0)+1;
-    if(isBistrackEntered(en,c.name))enteredCount++;else toDoCount++;
-  }));
-  const coPills=data.companies.slice(0,12).map(c=>`<span class="rpt-preview-co-pill">${esc(c.name)} · ${c.entries.length}</span>`).join('');
-  const moreCo=data.companies.length>12?` <span class="rpt-preview-co-pill">+${data.companies.length-12} more</span>`:'';
-  /* Build per-entry list grouped by company. Entered entries dimmed (unless hidden) */
-  const entriesHtml=data.companies.map((ci_co,ci)=>{
-    const visible=ci_co.entries.map((en,ei)=>{
-      const entered=isBistrackEntered(en,ci_co.name);
-      return {en,ei,entered};
-    }).filter(x=>!(rptHideEntered&&x.entered));
-    if(!visible.length)return '';
-    const rows=visible.map(({en,ei,entered})=>{
-      const typeCls=en.type==='Email'?'t-email':(en.type==='Note'?'t-note':'t-reminder');
-      const dateShort=en.date?fmtDateShort(en.date):'';
-      const tickCls=entered?'rpt-entry-tick on':'rpt-entry-tick';
-      const rowCls=entered?'rpt-entry-row entered':'rpt-entry-row';
-      return `<div class="${rowCls}">`+
-        `<div class="${tickCls}" onclick="toggleBistrackEnteredByIdx(${ci},${ei})" title="${entered?'Tick: entered in BisTrack (click to clear)':'Not yet entered in BisTrack (click to mark)'}"><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg></div>`+
-        `<span class="rpt-entry-date">${esc(dateShort)}</span>`+
-        `<span class="rpt-entry-type ${typeCls}">${esc(en.type)}</span>`+
-        `<span class="rpt-entry-summary" title="${esc(en.summary)}">${esc(en.summary||'(no summary)')}</span>`+
-        `<button class="rpt-entry-copy" onclick="showBistrackCopy(${ci},${ei})">Copy to BisTrack</button>`+
-      `</div>`;
-    }).join('');
-    const shownCount=visible.length,totalCount=ci_co.entries.length;
-    const coLabel=rptHideEntered&&shownCount!==totalCount?`${esc(ci_co.name)} · ${shownCount} of ${totalCount} outstanding`:`${esc(ci_co.name)} · ${totalCount} entr${totalCount===1?'y':'ies'}`;
-    return `<div class="rpt-entries-co"><div class="rpt-entries-co-name">${coLabel}</div>${rows}</div>`;
+  /* Phase 8v-3t: per-company consolidated preview. Each company gets one
+     card containing the multi-line block, a "Copy block" button, and a
+     small "BT code" badge when known. */
+  const cardsHtml=data.companies.map(function(co,idx){
+    const btBadge=co.btCode?' · <span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#0c447c;background:#eef4fb;padding:1px 6px;border-radius:3px;">'+esc(co.btCode)+'</span>':' · <span style="color:#c77;font-size:11px;">BT code not yet linked</span>';
+    return ''
+      +'<div style="border:1px solid #e8e8e4;border-radius:8px;background:#fff;padding:10px 12px;margin-bottom:10px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;">'
+        +'<div style="font-size:13px;font-weight:600;color:#222;">'+esc(co.name)+btBadge+' · <span style="color:#666;font-weight:500;">'+co.count+' entr'+(co.count===1?'y':'ies')+'</span></div>'
+        +'<button class="btn btn-sm" onclick="copyCompanyBlock('+idx+')" title="Copy this block as multi-line text — paste into a BisTrack notepad or anywhere">Copy block</button>'
+      +'</div>'
+      +'<pre style="margin:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;background:#f7faff;border:1px solid #e5ecf6;border-radius:6px;padding:8px 10px;white-space:pre-wrap;max-height:200px;overflow:auto;">'+esc(co.block)+'</pre>'
+    +'</div>';
   }).join('');
-  const toggleLabel=rptHideEntered?'Show entered':'Hide entered';
-  const toggleCls=rptHideEntered?'rpt-toggle-entered active':'rpt-toggle-entered';
-  const enteredText=enteredCount>0?` · <span class="rpt-entered-count">${enteredCount} already in BisTrack (excluded from export)</span>`:'';
-  const toolbar=`<div class="rpt-entries-toolbar">`+
-    `<div class="rpt-entries-counters"><strong>${toDoCount}</strong> of ${data.totalEntries} will be exported${enteredText}</div>`+
-    (enteredCount>0?`<button class="${toggleCls}" onclick="toggleRptHideEntered()">${toggleLabel}</button>`:'')+
-  `</div>`;
-  previewBody.innerHTML=`<strong>${data.totalEntries}</strong> entr${data.totalEntries===1?'y':'ies'} across <strong>${data.companies.length}</strong> compan${data.companies.length===1?'y':'ies'} ` +
-    `(${types.Email} email${types.Email===1?'':'s'}, ${types.Note} note${types.Note===1?'':'s'}, ${types.Reminder} reminder${types.Reminder===1?'':'s'})` +
-    `<div class="rpt-preview-co-list">${coPills}${moreCo}</div>`+
-    `<div class="rpt-entries-wrap">${toolbar}${entriesHtml||'<div style="padding:10px 4px;color:#888;font-size:11.5px;">Nothing outstanding — everything is marked as entered in BisTrack.</div>'}</div>`;
-  /* Export is disabled only if zero entries are to-do */
-  btn.disabled=toDoCount===0;
+  previewBody.innerHTML=''
+    +'<div style="margin-bottom:10px;font-size:12px;color:#555;"><strong>'+data.totalEntries+'</strong> entr'+(data.totalEntries===1?'y':'ies')+' across <strong>'+data.companies.length+'</strong> compan'+(data.companies.length===1?'y':'ies')+'. Each company exports as one row with all activity in a single cell.</div>'
+    +'<div style="max-height:480px;overflow:auto;">'+cardsHtml+'</div>';
+  btn.disabled=data.totalEntries===0;
+}
+/* Phase 8v-3t: copy a single company's consolidated block to the clipboard.
+   Used by the "Copy block" button on each preview card so Richard can paste
+   straight into a BisTrack notepad. */
+function copyCompanyBlock(idx){
+  const data=window.__rptPreview;
+  if(!data||!data.companies||!data.companies[idx])return;
+  const block=data.companies[idx].block||'';
+  const flash=function(ok){
+    /* Find the originating button by event.currentTarget if available, else
+       fall back to a heuristic: any [Copy block] button on the page that's
+       currently focused. */
+    const btn=(event&&event.currentTarget)||null;
+    if(btn){
+      const orig=btn.textContent;
+      btn.textContent=ok?'Copied ✓':'Copy failed';
+      btn.disabled=true;
+      setTimeout(function(){btn.textContent=orig;btn.disabled=false;},1200);
+    }
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(block).then(function(){flash(true);}).catch(function(){flash(bistrackFallbackCopy(block));});
+  }else{
+    flash(bistrackFallbackCopy(block));
+  }
 }
 /* Short date for the entry list: DD MMM (no year to keep row compact) */
 function fmtDateShort(iso){
@@ -9163,25 +9201,9 @@ function generateTimelineReportXlsx(){
   const s=document.getElementById('rpt-tl-start').value;
   const e=document.getElementById('rpt-tl-end').value;
   const hint=document.getElementById('rpt-tl-hint');
-  const rawData=buildTimelineReportData(s,e);
-  if(rawData.err||!rawData.totalEntries){
-    hint.textContent=rawData.err||'Nothing to export in this range.';
-    hint.className='rpt-hint err';
-    return;
-  }
-  /* Filter out entries marked as "entered in BisTrack" */
-  let excludedCount=0;
-  const companies=rawData.companies.map(co=>{
-    const remaining=co.entries.filter(en=>{
-      if(isBistrackEntered(en,co.name)){excludedCount++;return false;}
-      return true;
-    });
-    return {...co,entries:remaining};
-  }).filter(co=>co.entries.length>0);
-  const totalEntries=companies.reduce((n,co)=>n+co.entries.length,0);
-  const data={companies,totalEntries,err:null};
-  if(!totalEntries){
-    hint.textContent='All entries in this range are already marked as entered in BisTrack — nothing to export.';
+  const data=buildTimelineReportData(s,e);
+  if(data.err||!data.totalEntries){
+    hint.textContent=data.err||'Nothing to export in this range.';
     hint.className='rpt-hint err';
     return;
   }
@@ -9190,75 +9212,63 @@ function generateTimelineReportXlsx(){
     hint.className='rpt-hint err';
     return;
   }
-  /* Build rows: a header band per company, then its entries, then blank. */
+  /* Phase 8v-3t: one row per company. Activity column is a single cell
+     with multi-line text (\n-separated). Wrap text enabled so all lines
+     are visible. */
   const aoa=[];
   aoa.push(['SPP Timeline Report']);
   aoa.push(['Range: '+fmtDate(s)+' to '+fmtDate(e)]);
-  const genLine='Generated: '+new Date().toLocaleString('en-GB')+' by '+ME+(excludedCount>0?' · '+excludedCount+' already-entered entr'+(excludedCount===1?'y':'ies')+' excluded':'');
-  aoa.push([genLine]);
+  aoa.push(['Generated: '+new Date().toLocaleString('en-GB')+' by '+ME]);
   aoa.push([]);
-  const colHeaders=['Company','Date','Type','Author','Summary','Details','Project','Project ref'];
+  const colHeaders=['Company','Type','Assigned rep','BT code','Entries','Activity'];
   aoa.push(colHeaders);
-  /* Track which rows are company headers vs data for styling */
-  const companyHeaderRows=[];
-  data.companies.forEach(co=>{
-    const headerRowIdx=aoa.length;
-    aoa.push([co.name+(co.rep?' (rep: '+co.rep+')':'')+' — '+co.entries.length+' entr'+(co.entries.length===1?'y':'ies'),'','','','','','','']);
-    companyHeaderRows.push(headerRowIdx);
-    co.entries.forEach(en=>{
-      aoa.push([co.name,en.date,en.type,en.author,en.summary,en.details,en.project,en.ref]);
-    });
-    /* blank spacer row between companies */
-    aoa.push([]);
+  data.companies.forEach(function(co){
+    aoa.push([co.name,co.type||'',co.rep||'',co.btCode||'',co.count,co.block]);
   });
-  /* Trailing summary */
   aoa.push([]);
   aoa.push(['Totals',data.totalEntries+' entries',data.companies.length+' companies']);
 
   const ws=XLSX.utils.aoa_to_sheet(aoa);
-  /* Column widths */
   ws['!cols']=[
-    {wch:28}, /* Company */
-    {wch:12}, /* Date */
-    {wch:10}, /* Type */
-    {wch:18}, /* Author */
-    {wch:42}, /* Summary */
-    {wch:55}, /* Details */
-    {wch:26}, /* Project */
-    {wch:10}  /* Ref */
+    {wch:30}, /* Company */
+    {wch:18}, /* Type */
+    {wch:18}, /* Assigned rep */
+    {wch:12}, /* BT code */
+    {wch:8},  /* Entries */
+    {wch:90}  /* Activity (multi-line) */
   ];
-  /* Merge top 3 info rows across all columns */
   ws['!merges']=ws['!merges']||[];
-  ws['!merges'].push({s:{r:0,c:0},e:{r:0,c:7}});
-  ws['!merges'].push({s:{r:1,c:0},e:{r:1,c:7}});
-  ws['!merges'].push({s:{r:2,c:0},e:{r:2,c:7}});
-  /* Merge each company header row across all columns */
-  companyHeaderRows.forEach(r=>ws['!merges'].push({s:{r,c:0},e:{r,c:7}}));
-  /* Enable autofilter on the data header row (row index 4 = 5th row) */
-  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:4,c:0},e:{r:aoa.length-1,c:7}})};
-  /* Styling: bold title + column headers + company headers. XLSX .write supports s (style) on cells,
-     but the community build may not preserve all styles. Apply what we can. */
-  const boldStyle={font:{bold:true,sz:12}};
+  ws['!merges'].push({s:{r:0,c:0},e:{r:0,c:5}});
+  ws['!merges'].push({s:{r:1,c:0},e:{r:1,c:5}});
+  ws['!merges'].push({s:{r:2,c:0},e:{r:2,c:5}});
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:4,c:0},e:{r:4+data.companies.length,c:5}})};
   const titleStyle={font:{bold:true,sz:14}};
+  const boldStyle={font:{bold:true,sz:12}};
   const hdrStyle={font:{bold:true,sz:11,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1A1A18'}}};
-  const coHdrStyle={font:{bold:true,sz:11,color:{rgb:'1A1A18'}},fill:{fgColor:{rgb:'EEECE5'}}};
-  const setStyle=(addr,st)=>{if(ws[addr])ws[addr].s=st;};
+  const wrapStyle={alignment:{wrapText:true,vertical:'top'}};
+  const setStyle=function(addr,st){if(ws[addr])ws[addr].s=Object.assign({},ws[addr].s||{},st);};
   setStyle('A1',titleStyle);
   setStyle('A2',boldStyle);
   setStyle('A3',{font:{italic:true,sz:10,color:{rgb:'888888'}}});
-  /* Column header row (row 4, 0-indexed) */
   for(let c=0;c<colHeaders.length;c++){
     setStyle(XLSX.utils.encode_cell({r:4,c}),hdrStyle);
   }
-  /* Company header rows */
-  companyHeaderRows.forEach(r=>setStyle(XLSX.utils.encode_cell({r,c:0}),coHdrStyle));
-  /* Wrap text for the Details column (col F, index 5) on data rows */
-  for(let r=5;r<aoa.length;r++){
-    const cell=ws[XLSX.utils.encode_cell({r,c:5})];
-    if(cell&&cell.v&&String(cell.v).includes('\n')){
-      cell.s=Object.assign({},cell.s||{},{alignment:{wrapText:true,vertical:'top'}});
+  /* Set row heights + wrap-text on every company data row so multi-line
+     Activity cells display all lines without manual resizing. */
+  ws['!rows']=ws['!rows']||[];
+  for(let i=0;i<data.companies.length;i++){
+    const r=5+i;
+    const co=data.companies[i];
+    const lineCount=Math.max(1,(co.block||'').split('\n').length);
+    /* ~15pt per line, capped at 400 so a really chatty company doesn't
+       create an unreadable mega-row. */
+    ws['!rows'][r]={hpt:Math.min(400,15*lineCount+4)};
+    for(let c=0;c<colHeaders.length;c++){
+      setStyle(XLSX.utils.encode_cell({r,c}),wrapStyle);
     }
   }
+  /* Phase 8v-3t: per-row wrap was set in the company loop above; nothing
+     more to do here. */
 
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Timeline');
@@ -9677,7 +9687,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08o · company-timeline-types','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08p · timeline-report-per-company','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
