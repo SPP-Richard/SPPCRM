@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08v · tag-add-delete</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08x · move-email-between-projects</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -788,7 +788,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="back-btn" onclick="closeProjScreen()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>All projects</button>
     <div class="divider"></div>
     <div style="font-size:14px;font-weight:500;" id="proj-breadcrumb"></div>
-    <div id="proj-breadcrumb-cat" style="margin-left:10px;font-size:11px;color:#0c447c;font-family:ui-monospace,Menlo,Consolas,monospace;background:#eef4fb;padding:2px 8px;border-radius:3px;display:none;" title="CRM reference — also used as the Outlook category tag so emails can be searched by project"></div>
+    <div id="proj-breadcrumb-cat" onclick="copyCurrentProjectRef(event)" style="margin-left:10px;font-size:11px;color:#0c447c;font-family:ui-monospace,Menlo,Consolas,monospace;background:#eef4fb;padding:2px 8px;border-radius:3px;display:none;cursor:pointer;" title="Click to copy. Paste this as an Outlook category on any email to flag it for this project — the next inbox scan will link it."></div>
     <div style="margin-left:auto;display:flex;gap:8px;">
       <div class="sw" style="max-width:260px;">
         <svg class="sic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l2.5 2.5"/></svg>
@@ -1338,6 +1338,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <a href="#" class="cm-btn" id="cm-call-btn"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h3l2 4-2 1a8 8 0 004 4l1-2 4 2v3a1 1 0 01-1 1A12 12 0 013 4a1 1 0 011-1z"/></svg>Call</a>
         <button class="cm-btn" onclick="saveContactToOutlook()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Save to Outlook</button>
         <button class="cm-btn" onclick="findContactDetails()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/></svg>Find details</button>
+        <button class="cm-btn" onclick="deleteCurrentContact()" style="color:#a62929;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V3a1 1 0 011-1h2a1 1 0 011 1v1M5 4v9a1 1 0 001 1h4a1 1 0 001-1V4"/></svg>Delete contact</button>
       </div>
       <!-- Phase 8v-2t: contact type editor. Saves immediately and writes to
            company role memory so future imports for this company pre-fill. -->
@@ -2418,6 +2419,9 @@ function openProjectPicker(state){
     const src=projects.find(function(p){return p.id===state.sourceId;});
     title.textContent='Merge "'+(src?src.name:'project')+'" into…';
     sub.textContent='Pick a target. All emails, contacts, timeline, files, reminders move into the target. Source project is then deleted. Cannot be undone.';
+  }else if(state&&state.mode==='move-email-from-project'){
+    title.textContent='Move email to a different project';
+    sub.textContent='Pick a target. The email, its timeline entry, and Outlook category will move across.';
   }
   const inp=document.getElementById('projpick-search');
   if(inp){inp.value='';setTimeout(function(){inp.focus();},30);}
@@ -2433,9 +2437,10 @@ function renderProjectPickerList(){
   if(!list)return;
   const inp=document.getElementById('projpick-search');
   const q=(inp&&inp.value||'').trim().toLowerCase();
-  /* Exclude the source project from a merge picker — can't merge into self. */
+  /* Exclude the source project from a merge picker — can't merge into self.
+     Same logic for move-email-from-project — the email is already here. */
   let candidates=projects.slice();
-  if(_projectPickerState&&_projectPickerState.mode==='merge-into'&&_projectPickerState.sourceId){
+  if(_projectPickerState&&(_projectPickerState.mode==='merge-into'||_projectPickerState.mode==='move-email-from-project')&&_projectPickerState.sourceId){
     candidates=candidates.filter(function(p){return p.id!==_projectPickerState.sourceId;});
   }
   if(q){
@@ -2558,6 +2563,61 @@ function _projectPickerSelect(projectId){
     if(!confirm(summary)){hideProjectPicker();return;}
     _mergeProjectInto(sourceId,projectId);
     hideProjectPicker();
+  }else if(_projectPickerState.mode==='move-email-from-project'){
+    /* Phase 8v-3ab: move a single email between projects.
+       Moves the email row, the matching timeline entry, and re-tags the
+       Outlook category so threading/search stays consistent. */
+    const sourceId=_projectPickerState.sourceId;
+    const emailId=_projectPickerState.emailId;
+    if(sourceId===projectId){hideProjectPicker();return;}
+    const src=projects.find(function(p){return p.id===sourceId;});
+    if(!src||!emailId){hideProjectPicker();return;}
+    const eIdx=(src.emails||[]).findIndex(function(x){return x.id===emailId;});
+    if(eIdx<0){alert('Email not found on the source project.');hideProjectPicker();return;}
+    const email=src.emails[eIdx];
+    /* Remove from source */
+    src.emails.splice(eIdx,1);
+    const tlIdx=(src.timeline||[]).findIndex(function(t){return t&&(t.emailId===emailId||t.id===('tl-'+emailId));});
+    let tlEntry=null;
+    if(tlIdx>=0){tlEntry=src.timeline.splice(tlIdx,1)[0];}
+    /* Add to target — guard against duplicates */
+    if(!Array.isArray(target.emails))target.emails=[];
+    if(!target.emails.some(function(x){return x.id===emailId;})){
+      target.emails.push(email);
+    }
+    if(tlEntry){
+      if(!Array.isArray(target.timeline))target.timeline=[];
+      if(!target.timeline.some(function(t){return t&&(t.id===tlEntry.id||t.emailId===emailId);})){
+        target.timeline.unshift(tlEntry);
+      }
+    }
+    /* Refresh lastUpdated on both projects */
+    const today=new Date().toISOString().slice(0,10);
+    src.lastUpdated=today;
+    target.lastUpdated=today;
+    persistProjects();
+    hideProjectPicker();
+    /* Render whatever tab is open — we're still on the source project */
+    if(typeof renderTab==='function')renderTab();
+    /* Re-tag Outlook category if the target has one. Scoped to the moved
+       email only — strips the source's SPP-CRM-* and adds the target's.
+       Single Graph PATCH; failure is contained to this email. */
+    if(target.outlookCategory){
+      _applyProjectCategoryToOneEmail(target,email,{silent:true}).catch(function(e){try{console.warn('[Phase 8v-3ab] move re-tag failed',e);}catch(_){}});
+    }
+    /* Friendly confirmation banner */
+    setTimeout(function(){
+      try{
+        const body=document.getElementById('detail-body');
+        if(body){
+          const banner=document.createElement('div');
+          banner.style.cssText='background:#e7f4d8;color:#2e5e13;padding:8px 12px;border:1px solid #c8dfa7;border-radius:6px;font-size:12px;margin-bottom:10px;';
+          banner.textContent='Email moved to "'+target.name+'".';
+          body.insertBefore(banner,body.firstChild);
+          setTimeout(function(){if(banner.parentNode)banner.remove();},4000);
+        }
+      }catch(_){}
+    },10);
   }
 }
 /* ====== Phase 8v-2s: project merge ====== */
@@ -2982,6 +3042,29 @@ async function _applyProjectCategoryToEmails(project,opts){
    the strip-old-add-new in one step. */
 async function _retagProjectEmails(project){
   return await _applyProjectCategoryToEmails(project,{silent:true});
+}
+/* Phase 8v-3ab: re-tag a single email to match a target project's category.
+   Scoped version of _applyProjectCategoryToEmails — used by the move-email
+   path where only one email's category needs to flip. Single Graph batch
+   with one PATCH; failure is contained to that email. Mirrors the result
+   back onto email.categories on success so the local state stays in sync. */
+async function _applyProjectCategoryToOneEmail(project,email,opts){
+  if(!project||!project.outlookCategory||!email||!email.id)return {success:0,failed:0,errors:[]};
+  const newCat=project.outlookCategory;
+  const newCats=_computeUpdatedCategories(email.categories||[],newCat);
+  const updates=[{id:email.id,categories:newCats,_emailRef:email}];
+  let res;
+  try{res=await _patchMessageCategoriesBatch(updates);}
+  catch(e){
+    if(opts&&opts.silent){return {success:0,failed:1,errors:[{error:e.message||String(e)}],authError:true};}
+    throw e;
+  }
+  if(res.success>0){
+    const failedIds=new Set(res.errors.map(function(x){return x.id;}));
+    if(!failedIds.has(email.id))email.categories=newCats.slice();
+    try{persistProjects();}catch(e){}
+  }
+  return res;
 }
 /* Phase 8v-2z: create an Outlook calendar event as a follow-up for a
    specific email. Uses Calendars.ReadWrite which is already in our scopes.
@@ -5183,7 +5266,11 @@ function renderTab(){
        Auto-imported contacts default to blank type. Click any contact and
        use the dropdown in the modal to assign architect / MC / sub. */
     const unassigned=p.contacts.filter(c=>!c.type||(c.type!=='architect'&&c.type!=='mc'&&c.type!=='sub'));
-    body.innerHTML=rg('Architect',arch,'ca-a')+rg('Main contractor',mc,'ca-m')+rg('Sub-contractors',sub,'ca-s')+rg('Unassigned',unassigned,'ca-u')||'<div style="color:#aaa;font-size:13px;">No contacts recorded.</div>';
+    /* Phase 8v-3aa: + New contact button at the top of the Contacts tab —
+       creates a blank contact and opens it in the modal for editing. */
+    const addBar=`<div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><button class="btn btn-sm btn-primary" onclick="addNewContact(${p.id})"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="margin-right:5px;vertical-align:-2px;"><path d="M8 3v10M3 8h10"/></svg>New contact</button></div>`;
+    const groups=rg('Architect',arch,'ca-a')+rg('Main contractor',mc,'ca-m')+rg('Sub-contractors',sub,'ca-s')+rg('Unassigned',unassigned,'ca-u');
+    body.innerHTML=addBar+(groups||'<div style="color:#aaa;font-size:13px;text-align:center;padding:20px;">No contacts on this project yet. Click <strong>New contact</strong> above to add one manually, or run <strong>Scan my inbox</strong> to import from email.</div>');
 
   } else if(currentTab==='emails'){
     /* Phase 8v-2z: redesigned Emails tab.
@@ -5884,6 +5971,10 @@ function _renderEmailRow(p,e,indent){
   const rem=_findReminderForEmail(p,e.id);
   const flagFilled=!!rem;
   const flagBtn='<button onclick="event.stopPropagation();_emailFlagFollowUp('+idAttr+')" title="'+(flagFilled?'Already flagged · click to unflag':'Flag for follow-up — creates a CRM reminder + Outlook calendar event')+'" style="border:0;background:none;cursor:pointer;padding:2px 4px;font-size:16px;color:'+(flagFilled?'#a87000':'#bbb')+';flex-shrink:0;">'+(flagFilled?'⚑':'⚐')+'</button>';
+  /* Phase 8v-3ab: Move-to-project button — corrects an email landed on the
+     wrong project. Opens the project picker; selecting a target moves the
+     email, its timeline entry, and re-tags the Outlook category. */
+  const moveBtn='<button onclick="event.stopPropagation();_moveEmailToProject('+idAttr+')" title="Move this email to a different project — also re-tags the Outlook category" style="border:1px solid #d3dce6;background:#fff;cursor:pointer;padding:2px 6px;font-size:11px;color:#0c447c;flex-shrink:0;border-radius:4px;">Move</button>';
   /* Phase 8v-3a: chevron moved to the left, larger size (18×18 vs 12×12). */
   const expandBtn='<button onclick="event.stopPropagation();toggleEmailRow('+idAttr+')" title="Show/hide details" style="border:1px solid #d3dce6;background:#fff;cursor:pointer;padding:4px;color:#0c447c;flex-shrink:0;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate('+(expanded?'180':'0')+'deg);transition:transform 0.15s;"><path d="M4 6l4 4 4-4"/></svg></button>';
   const rowBg=e.isOutbound?'#f7faff':'#fff';
@@ -5897,7 +5988,7 @@ function _renderEmailRow(p,e,indent){
       +co
       +' · <span style="color:#555;">'+subj+'</span>'
     +'</div>'
-    +'<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+flagBtn+olLink+'</div>'
+    +'<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+flagBtn+moveBtn+olLink+'</div>'
     +'</div>';
   let detailsRow='';
   if(expanded){
@@ -6078,6 +6169,18 @@ function _copyToClipboard(text){
     const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
     document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
   }catch(e){try{console.warn('Clipboard fallback failed',e);}catch(_){}}
+}
+/* ===== Phase 8v-3ab: move an email from one project to another =====
+   Use case: scan landed an email on the wrong project, or you noticed
+   after the fact that it belongs elsewhere. Click Move on the row,
+   pick the target — the email, its timeline mirror, and Outlook
+   category all move in lockstep. */
+function _moveEmailToProject(emailId){
+  if(!currentProject||!emailId)return;
+  const e=(currentProject.emails||[]).find(function(x){return x.id===emailId;});
+  if(!e){alert('Email not found on this project.');return;}
+  if(!projects.length||projects.length<2){alert('No other projects to move to. Create one first.');return;}
+  openProjectPicker({mode:'move-email-from-project',emailId:emailId,sourceId:currentProject.id});
 }
 /* ===== Phase 8v-2z: flag-for-followup ===== */
 function _emailFlagFollowUp(emailId){
@@ -6509,6 +6612,72 @@ const CONTACT_TYPE_LABEL={architect:'Architect',mc:'Main contractor',sub:'Sub-co
    "Unassigned" group on the Contacts tab. Auto-imported contacts default
    to blank type because we can't reliably guess role from email domain. */
 const CONTACT_TYPE_UNASSIGNED='ca-u';
+/* Phase 8v-3aa: copy the open project's CRM reference (Outlook category)
+   to the clipboard so the user can paste it as an Outlook category onto
+   any email they want pulled into the project on the next scan. Briefly
+   flashes the chip to confirm. */
+function copyCurrentProjectRef(ev){
+  if(!currentProject||!currentProject.outlookCategory)return;
+  const ref=currentProject.outlookCategory;
+  const chip=document.getElementById('proj-breadcrumb-cat');
+  const flash=function(ok){
+    if(!chip)return;
+    const orig=chip.textContent;
+    chip.textContent=ok?(ref+' ✓ copied'):(ref+' — copy failed');
+    chip.style.background=ok?'#e7f4d8':'#fdf3f3';
+    chip.style.color=ok?'#2e5e13':'#a62929';
+    setTimeout(function(){
+      chip.textContent=orig;
+      chip.style.background='#eef4fb';
+      chip.style.color='#0c447c';
+    },1400);
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ref).then(function(){flash(true);}).catch(function(){flash(bistrackFallbackCopy(ref));});
+  }else{
+    flash(bistrackFallbackCopy(ref));
+  }
+  if(ev&&ev.stopPropagation)ev.stopPropagation();
+}
+/* Phase 8v-3aa: manually add a new contact to a project. Creates a blank
+   contact record, persists, then opens the modal in edit mode pointing at
+   the new row so the user can fill in the fields. Each input on the modal
+   already auto-saves on blur via _saveContactField, so closing the modal
+   without filling anything leaves an empty contact (harmless — user can
+   delete it later if they realise they didn't mean to add). */
+/* Phase 8v-3aa: delete the currently-open contact from its project. Asks
+   for confirmation unless the contact is completely empty (e.g. an
+   accidentally-created blank from "+ New contact" with no fields filled). */
+function deleteCurrentContact(){
+  if(!currentContact)return;
+  const p=projects.find(function(x){return x.id===currentContact.projectId;});
+  if(!p)return;
+  const c=p.contacts&&p.contacts[currentContact.contactIndex];
+  if(!c)return;
+  const isEmpty=!c.name&&!c.email&&!c.phone&&!c.role&&!c.company;
+  if(!isEmpty){
+    const label=c.name||c.email||'this contact';
+    if(!confirm('Delete '+label+' from this project?\n\nThis only removes the contact from this project record. Email history is preserved.'))return;
+  }
+  p.contacts.splice(currentContact.contactIndex,1);
+  persistProjects();
+  hideContactModal();
+  if(typeof renderTab==='function')try{renderTab();}catch(e){}
+}
+function addNewContact(projectId){
+  const p=projects.find(function(x){return x.id===projectId;});
+  if(!p)return;
+  if(!Array.isArray(p.contacts))p.contacts=[];
+  const blank={name:'',email:'',phone:'',role:'',company:'',type:'',init:'??'};
+  p.contacts.push(blank);
+  persistProjects();
+  openContactModal(projectId,p.contacts.length-1);
+  /* Focus the Name input so the user starts typing immediately. */
+  setTimeout(function(){
+    const nameInput=document.getElementById('cm-input-name');
+    if(nameInput)nameInput.focus();
+  },50);
+}
 function openContactModal(projectId,contactIndex){
   const p=projects.find(x=>x.id===projectId); if(!p)return;
   const c=p.contacts[contactIndex]; if(!c)return;
@@ -7678,7 +7847,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08v · tag-add-delete'
+      build:'2026-05-08x · move-email-between-projects'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7843,7 +8012,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08v · tag-add-delete';
+const BACKUP_BUILD='2026-05-08x · move-email-between-projects';
 function exportBackup(){
   const payload={
     _meta:{
@@ -10350,7 +10519,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08v · tag-add-delete','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08x · move-email-between-projects','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
