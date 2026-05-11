@@ -407,6 +407,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cm-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#444;padding:7px 10px;border-radius:7px;background:#f9f9f7;margin-top:6px;}
 .cm-row svg{color:#999;flex-shrink:0;}
 .cm-row-empty{color:#aaa;font-style:italic;}
+.cm-field{display:flex;flex-direction:column;gap:4px;margin-top:8px;}
+.cm-field-label{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;}
+.cm-field-input{font-size:13px;padding:7px 10px;border:1px solid #d3dce6;border-radius:6px;background:#fff;color:#222;font-family:inherit;width:100%;box-sizing:border-box;transition:border-color 0.12s;}
+.cm-field-input:focus{outline:none;border-color:#185fa5;}
+.cm-field-input::placeholder{color:#aaa;}
 .cm-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;}
 .cm-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 10px;font-size:12px;font-weight:500;border:1px solid #e0e0db;border-radius:8px;background:#fff;color:#444;cursor:pointer;font-family:inherit;text-decoration:none;transition:all 0.12s;}
 .cm-btn:hover:not(.cm-btn-disabled){border-color:#185fa5;color:#185fa5;background:#f4f8fc;}
@@ -690,7 +695,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="runRealInboxScan()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4"/><path d="M10 10l4 4"/><rect x="2" y="4" width="8" height="6" rx="1" style="display:none;"/></svg>Initial inbox scan<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08i · contact-signature-lookup</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08j · contact-card-editable</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1207,14 +1212,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="xb" onclick="hideContactModal()">×</button>
     </div>
     <div class="modal-body">
-      <div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:4px;">Contact details</div>
-      <div class="cm-row" id="cm-email-row">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg>
-        <span id="cm-email-val">—</span>
+      <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:8px;">Contact details</div>
+      <!-- Phase 8v-3n: editable form. All five fields can be typed into so
+           Richard can correct anything Find details didn't pick up. Each
+           input persists on blur via _saveContactField. -->
+      <div class="cm-field">
+        <label class="cm-field-label">Name</label>
+        <input type="text" class="cm-field-input" id="cm-input-name" onchange="_saveContactField('name',this.value)" placeholder="e.g. James Webb"/>
       </div>
-      <div class="cm-row" id="cm-phone-row">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h3l2 4-2 1a8 8 0 004 4l1-2 4 2v3a1 1 0 01-1 1A12 12 0 013 4a1 1 0 011-1z"/></svg>
-        <span id="cm-phone-val">—</span>
+      <div class="cm-field">
+        <label class="cm-field-label">Job title</label>
+        <input type="text" class="cm-field-input" id="cm-input-role" onchange="_saveContactField('role',this.value)" placeholder="e.g. Lead Architect"/>
+      </div>
+      <div class="cm-field">
+        <label class="cm-field-label">Company</label>
+        <input type="text" class="cm-field-input" id="cm-input-company" onchange="_saveContactField('company',this.value)" placeholder="e.g. Foster &amp; Partners"/>
+      </div>
+      <div class="cm-field">
+        <label class="cm-field-label">Email</label>
+        <input type="email" class="cm-field-input" id="cm-input-email" onchange="_saveContactField('email',this.value)" placeholder="name@example.com"/>
+      </div>
+      <div class="cm-field">
+        <label class="cm-field-label">Phone</label>
+        <input type="text" class="cm-field-input" id="cm-input-phone" onchange="_saveContactField('phone',this.value)" placeholder="020 1234 5678"/>
       </div>
       <div class="cm-actions">
         <a href="#" class="cm-btn" id="cm-email-btn"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg>Send email</a>
@@ -6369,11 +6389,21 @@ function openContactModal(projectId,contactIndex){
   if(remCo)remCo.textContent=c.company||'this company';
   const remCheckbox=document.getElementById('cm-remember-role');
   if(remCheckbox)remCheckbox.disabled=!c.company;
-  const emailVal=document.getElementById('cm-email-val');
-  const emailRow=document.getElementById('cm-email-row');
+  /* Phase 8v-3n: populate the editable inputs. Each input persists on
+     blur/change via _saveContactField. The Send-email and Call buttons
+     still derive from the current values so they stay in sync. */
+  const nameInput=document.getElementById('cm-input-name');
+  const roleInput=document.getElementById('cm-input-role');
+  const companyInput=document.getElementById('cm-input-company');
+  const emailInput=document.getElementById('cm-input-email');
+  const phoneInput=document.getElementById('cm-input-phone');
+  if(nameInput)nameInput.value=c.name||'';
+  if(roleInput)roleInput.value=c.role||'';
+  if(companyInput)companyInput.value=c.company||'';
+  if(emailInput)emailInput.value=c.email||'';
+  if(phoneInput)phoneInput.value=c.phone||'';
   const emailBtn=document.getElementById('cm-email-btn');
-  if(c.email){
-    emailVal.textContent=c.email; emailVal.classList.remove('cm-row-empty');
+  if(c.email&&emailBtn){
     /* Prefill subject with "Re: [project name]" and include a project-reference line in the body. */
     const subject=p.name?'Re: '+p.name:'';
     const bodyLines=[];
@@ -6386,23 +6416,46 @@ function openContactModal(projectId,contactIndex){
     emailBtn.href='mailto:'+c.email+'?'+params.join('&');
     emailBtn.classList.remove('cm-btn-disabled');
     emailBtn.removeAttribute('onclick');
-  } else {
-    emailVal.textContent='No email on file'; emailVal.classList.add('cm-row-empty');
+  } else if(emailBtn){
     emailBtn.removeAttribute('href'); emailBtn.classList.add('cm-btn-disabled');
     emailBtn.setAttribute('onclick','event.preventDefault();');
   }
-  const phoneVal=document.getElementById('cm-phone-val');
   const phoneBtn=document.getElementById('cm-call-btn');
-  if(c.phone){
-    phoneVal.textContent=c.phone; phoneVal.classList.remove('cm-row-empty');
+  if(c.phone&&phoneBtn){
     phoneBtn.href='tel:'+c.phone.replace(/[^\d+]/g,''); phoneBtn.classList.remove('cm-btn-disabled');
     phoneBtn.removeAttribute('onclick');
-  } else {
-    phoneVal.textContent='No phone on file'; phoneVal.classList.add('cm-row-empty');
+  } else if(phoneBtn){
     phoneBtn.removeAttribute('href'); phoneBtn.classList.add('cm-btn-disabled');
     phoneBtn.setAttribute('onclick','event.preventDefault();');
   }
   document.getElementById('contact-modal').classList.add('open');
+}
+/* Phase 8v-3n: persist a single field edit on the open contact card.
+   Re-derives initials on name change. Re-renders the modal header + the
+   active tab so the new values flow through to chips, Contacts tab groups
+   and Emails tab fallback. Whitespace-only values are stored as empty
+   string so chips and groups don't show a phantom blank entry. */
+function _saveContactField(field,value){
+  if(!currentContact)return;
+  const c=currentContact.data;
+  if(!c)return;
+  const clean=String(value==null?'':value).trim();
+  if((c[field]||'')===clean)return; /* no-op */
+  c[field]=clean;
+  if(field==='name'){
+    /* Re-derive 2-letter initials so the avatar updates on rename. */
+    const parts=clean.split(/\s+/).filter(Boolean);
+    if(!parts.length)c.init='??';
+    else if(parts.length===1)c.init=parts[0].slice(0,2).toUpperCase();
+    else c.init=((parts[0][0]||'')+(parts[parts.length-1][0]||'')).toUpperCase();
+  }
+  persistProjects();
+  /* Re-render the modal so the header (name, role, company, initials) and
+     the action buttons (mailto / tel) reflect the new value. */
+  openContactModal(currentContact.projectId,currentContact.contactIndex);
+  /* Re-render the active tab too — contact chips, role groupings and
+     Emails-tab company labels all depend on this data. */
+  if(typeof renderTab==='function')try{renderTab();}catch(e){}
 }
 function hideContactModal(){document.getElementById('contact-modal').classList.remove('open');currentContact=null;}
 /* Phase 8v-2t: assign / change a contact's type. Persists immediately and
@@ -6617,17 +6670,10 @@ async function findContactDetails(){
     if(c.phone&&bestPhone&&c.phone!==bestPhone)lines.push('(current phone: '+c.phone+')');
     lines.push('','Apply to '+(c.name||'this contact')+'\'s card?');
     if(!confirm(lines.join('\n')))return;
-    /* Write through to the project's contact array. */
-    const p=projects.find(function(x){return x.id===currentContact.projectId;});
-    if(!p)return;
-    const target=p.contacts[currentContact.contactIndex];
-    if(!target)return;
-    if(bestRole)target.role=bestRole;
-    if(bestPhone)target.phone=bestPhone;
-    persistProjects();
-    /* Re-render the modal so the new values appear immediately. */
-    openContactModal(p.id,currentContact.contactIndex);
-    if(typeof renderTab==='function')try{renderTab();}catch(e){}
+    /* Phase 8v-3n: route through _saveContactField so persistence + modal
+       re-render + tab re-render all happen the same way as a manual edit. */
+    if(bestRole)_saveContactField('role',bestRole);
+    if(bestPhone)_saveContactField('phone',bestPhone);
   }catch(err){
     alert('Find details failed:\n\n'+(err&&err.message||err)+'\n\nThe contact\'s existing details are unchanged.');
     try{console.warn('[Phase 8v-3m] findContactDetails error',err);}catch(_){}
@@ -7395,7 +7441,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08i · contact-signature-lookup'
+      build:'2026-05-08j · contact-card-editable'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -7560,7 +7606,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08i · contact-signature-lookup';
+const BACKUP_BUILD='2026-05-08j · contact-card-editable';
 function exportBackup(){
   const payload={
     _meta:{
@@ -9142,7 +9188,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08i · contact-signature-lookup','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08j · contact-card-editable','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
