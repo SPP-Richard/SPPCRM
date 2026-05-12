@@ -697,6 +697,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" onclick="setNav(this,'reports')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="2" width="10" height="12" rx="1"/><path d="M6 5h4M6 8h4M6 11h2"/></svg>Reports</div>
     <div class="ns" style="margin-top:8px;">Tools</div>
     <div class="ni" onclick="runScanSinceLastRun()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg>Scan my inbox</div>
+    <!-- Phase 8v-3al: re-review pipeline. Flag emails in Outlook with the
+         review category, click here to sweep them into the review queue. -->
+    <div class="ni" onclick="runReviewScan()" title="Find emails you tagged in Outlook with the re-review category and pull them (with their conversation chain) back through the scan UI."><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8a5 5 0 0110 0v1"/><path d="M11 7l2 2 2-2"/><path d="M13 8a5 5 0 01-10 0v-1"/><path d="M5 9l-2-2-2 2"/></svg>Find emails to re-review</div>
     <div class="ni" data-admin-only="true" onclick="showBulkImport()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Bulk import<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ns" data-admin-header="true" style="margin-top:8px;">Admin</div>
     <div class="ni" data-admin-only="true" onclick="showAdmin()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.8 2.2-5 5-5s5 2.2 5 5"/></svg>Sales rep list<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
@@ -706,7 +709,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ak · project-merge-button-and-ref-aliases</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08al · find-emails-to-re-review</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1814,6 +1817,14 @@ const DEFAULT_SCAN_SETTINGS={
   /* Date range for the first big back-scan (in days). Subsequent scans
      only fetch new emails since the last scan. */
   firstScanDays:365,
+  /* Phase 8v-3al: re-review pipeline. Flag an email in Outlook with the
+     reviewCategory name, then run Tools → Find emails to re-review to
+     pull them (and their conversation chain) back through the scan UI.
+     stripReviewOnLink (default on) removes the review category from any
+     email that gets linked, so the next run doesn't re-surface it. */
+  reviewCategory:'SPP-CRM-Review',
+  reviewWindowDays:365,
+  stripReviewOnLink:true,
   /* Phase 8v-3af + 8v-3ag: BT TYPE options for the customer detail dropdown.
      Mirrors the BisTrack customer-type taxonomy SPP uses. Tune via the
      "edit list" link on the customer detail page, or via Scan settings. */
@@ -1984,10 +1995,35 @@ function renderScanSettingsPanel(){
     +listEditor('Ignore domains','ignoreDomains',
       'Sender domains to silently skip entirely. Exact match.',
       'e.g. mailchimp.com')
+    /* Phase 8v-3al: re-review pipeline settings. Scalar fields rendered
+       inline; no chip editor needed. Updates save instantly via change
+       listeners on each input. */
+    +'<div style="margin-top:14px;padding:12px 14px;background:#fff;border:1px solid #d3dce6;border-radius:8px;">'
+    +'<div style="font-size:12px;font-weight:500;color:#333;margin-bottom:2px;">Re-review pipeline</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:10px;line-height:1.4;">When you spot an email in Outlook that should have been linked to a project, apply the category below to it. Then click Tools → Find emails to re-review to sweep them (plus their conversation chains) back through the scan UI.</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
+    +'<div><div style="font-size:11px;color:#666;margin-bottom:3px;">Re-review category</div><input type="text" id="scan-set-reviewCategory" value="'+esc(scanSettings.reviewCategory||'')+'" placeholder="SPP-CRM-Review" onchange="_scanSettingsScalarSet(\'reviewCategory\',this.value)" style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #d3dce6;border-radius:4px;box-sizing:border-box;"/></div>'
+    +'<div><div style="font-size:11px;color:#666;margin-bottom:3px;">Lookback window (days)</div><input type="number" min="1" max="3650" id="scan-set-reviewWindowDays" value="'+(scanSettings.reviewWindowDays||365)+'" onchange="_scanSettingsScalarSet(\'reviewWindowDays\',this.value)" style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #d3dce6;border-radius:4px;box-sizing:border-box;"/></div>'
+    +'</div>'
+    +'<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#333;cursor:pointer;"><input type="checkbox" id="scan-set-stripReviewOnLink"'+(scanSettings.stripReviewOnLink?' checked':'')+' onchange="_scanSettingsScalarSet(\'stripReviewOnLink\',this.checked)" style="margin:0;"/><span>Strip the review category from emails after they\'re linked, so the next run doesn\'t re-surface them.</span></label>'
+    +'</div>'
     +'<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
     +'<div style="font-size:11px;color:#666;">Settings save instantly. To reset everything to defaults, click Reset.</div>'
     +'<button class="btn btn-sm" onclick="_scanSettingsReset()" style="color:#a62929;">Reset to defaults</button>'
     +'</div>';
+}
+/* Phase 8v-3al: scalar-field setter used by the re-review settings block.
+   Coerces numbers, casts checkbox values to bool, trims strings. */
+function _scanSettingsScalarSet(key,val){
+  if(key==='reviewWindowDays'){
+    const n=parseInt(val,10);
+    scanSettings[key]=isNaN(n)?365:Math.max(1,Math.min(3650,n));
+  }else if(key==='stripReviewOnLink'){
+    scanSettings[key]=!!val;
+  }else{
+    scanSettings[key]=String(val||'').trim();
+  }
+  persistScanSettings();
 }
 function _scanSettingsAdd(key){
   const inp=document.getElementById('scan-add-'+key);
@@ -2098,6 +2134,14 @@ function renderRealScanProgress(){
       +(realScanState.throttled?'<div style="font-size:11px;color:#a87000;margin-top:6px;">Microsoft Graph rate-limit hit — backing off automatically...</div>':'')
       +retryBanner
       +'<div style="margin-top:24px;color:#888;font-size:11px;line-height:1.5;">Large back-scans (12 months ≈ 15,000 emails) can take several minutes. You can leave this modal open while it runs.</div>'
+      +'</div>';
+  }else if(realScanState.phase==='chaining'){
+    /* Phase 8v-3al: re-review pipeline pulls conversation siblings for
+       every tagged email so a chain represented by one tag still surfaces
+       the whole thread. This phase fetches those siblings from Graph. */
+    body.innerHTML='<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:14px;color:#333;margin-bottom:8px;">Pulling conversation chains for '+realScanState.fetchedSoFar+' tagged email'+(realScanState.fetchedSoFar===1?'':'s')+'...</div>'
+      +'<div style="margin-top:14px;color:#888;font-size:11px;">Each tagged email\'s full reply chain is fetched so you can review the whole conversation, not just the one message you flagged.</div>'
       +'</div>';
   }else if(realScanState.phase==='matching'){
     body.innerHTML='<div style="padding:40px 20px;text-align:center;">'
@@ -3195,9 +3239,29 @@ function _buildProjectCompanyCategoryUrl(project,companyName){
 /* Compute new Outlook category array for a message: strip any existing
    SPP-CRM-* tag, append the new one. Idempotent if the new tag is already
    present. */
-function _computeUpdatedCategories(existingCategories,newCategory){
+/* Phase 8v-3al: collect the additional category names that any re-tag call
+   should strip alongside the standard SPP-CRM-* sweep. Combines explicit
+   opts.alsoStrip with the ambient review-category when a re-review scan is
+   in flight (realScanState.reviewMode + scanSettings.stripReviewOnLink). */
+function _computeReviewStripList(opts){
+  const out=[];
+  if(opts&&Array.isArray(opts.alsoStrip))opts.alsoStrip.forEach(function(s){if(s)out.push(s);});
+  if(typeof realScanState!=='undefined'&&realScanState&&realScanState.reviewMode&&scanSettings&&scanSettings.stripReviewOnLink){
+    const cat=realScanState.reviewCategory||(scanSettings.reviewCategory||'');
+    if(cat&&out.indexOf(cat)<0)out.push(cat);
+  }
+  return out;
+}
+function _computeUpdatedCategories(existingCategories,newCategory,alsoStrip){
+  /* Phase 8v-3al: alsoStrip is an optional array of additional category
+     names to remove (case-insensitive). Used by the re-review pipeline
+     to drop SPP-CRM-Review when an email gets linked. */
   const base=Array.isArray(existingCategories)?existingCategories.slice():[];
-  const filtered=base.filter(function(c){return !_isSppCrmCategory(c);});
+  let filtered=base.filter(function(c){return !_isSppCrmCategory(c);});
+  if(Array.isArray(alsoStrip)&&alsoStrip.length){
+    const stripSet=new Set(alsoStrip.map(function(s){return String(s||'').trim().toLowerCase();}).filter(Boolean));
+    filtered=filtered.filter(function(c){return !stripSet.has(String(c).trim().toLowerCase());});
+  }
   if(newCategory&&filtered.indexOf(newCategory)<0)filtered.push(newCategory);
   return filtered;
 }
@@ -3256,8 +3320,10 @@ async function _patchMessageCategoriesBatch(updates){
 async function _applyProjectCategoryToEmails(project,opts){
   if(!project||!project.outlookCategory||!Array.isArray(project.emails)||!project.emails.length)return {success:0,failed:0,errors:[]};
   const newCat=project.outlookCategory;
+  /* Phase 8v-3al: see _applyProjectCategoryToSomeEmails note. */
+  const alsoStrip=_computeReviewStripList(opts);
   const updates=project.emails.map(function(e){
-    const newCats=_computeUpdatedCategories(e.categories||[],newCat);
+    const newCats=_computeUpdatedCategories(e.categories||[],newCat,alsoStrip);
     return {id:e.id,categories:newCats,_emailRef:e};
   });
   let res;
@@ -3293,8 +3359,12 @@ async function _retagProjectEmails(project){
 async function _applyProjectCategoryToSomeEmails(project,emails,opts){
   if(!project||!project.outlookCategory||!Array.isArray(emails)||!emails.length)return {success:0,failed:0,errors:[]};
   const newCat=project.outlookCategory;
+  /* Phase 8v-3al: when a re-review scan is active, also strip the review
+     category from any email we re-tag, so a subsequent run doesn't pick
+     them up again. Ambient via realScanState so caller doesn't need to know. */
+  const alsoStrip=_computeReviewStripList(opts);
   const updates=emails.filter(function(e){return e&&e.id;}).map(function(e){
-    const newCats=_computeUpdatedCategories(e.categories||[],newCat);
+    const newCats=_computeUpdatedCategories(e.categories||[],newCat,alsoStrip);
     return {id:e.id,categories:newCats,_emailRef:e};
   });
   if(!updates.length)return {success:0,failed:0,errors:[]};
@@ -3863,9 +3933,17 @@ async function fetchRecentEmails(daysBack,opts){
   const since=new Date();since.setDate(since.getDate()-daysBack);
   const sinceIso=since.toISOString();
   /* /me/messages with $filter on receivedDateTime, $select on the fields we
-     need, $orderby newest first, $top for page size. */
+     need, $orderby newest first, $top for page size. Phase 8v-3al: optional
+     categoryFilter narrows the fetch to emails carrying a named Outlook
+     category — used by the re-review pipeline so we only pull tagged emails
+     rather than the whole window. */
+  const filterParts=['receivedDateTime ge '+sinceIso];
+  if(opts.categoryFilter){
+    const safe=String(opts.categoryFilter).replace(/'/g,"''");
+    filterParts.push("categories/any(c:c eq '"+safe+"')");
+  }
   const baseUrl='https://graph.microsoft.com/v1.0/me/messages'
-    +'?$filter='+encodeURIComponent('receivedDateTime ge '+sinceIso)
+    +'?$filter='+encodeURIComponent(filterParts.join(' and '))
     +'&$select=id,subject,from,toRecipients,ccRecipients,categories,bodyPreview,conversationId,receivedDateTime,hasAttachments,isRead,webLink'
     +'&$orderby=receivedDateTime desc'
     +'&$top='+pageSize;
@@ -4890,6 +4968,92 @@ async function runScanSinceLastRun(){
   }finally{
     if(btn){btn.disabled=false;btn.textContent=orig||'Scan my inbox';}
     renderScanStrip();
+  }
+}
+/* Phase 8v-3al: re-review pipeline. Fetch every email in Outlook tagged
+   with scanSettings.reviewCategory, filter out anything already linked,
+   pull the conversation chain, then drop them into the existing scan
+   review modal so the user can Link / Create / Skip per row. After link,
+   the review category gets stripped from those emails (when
+   stripReviewOnLink is on) so the next run doesn't re-surface them. */
+async function runReviewScan(){
+  if(realScanState&&realScanState.phase==='review'){
+    const remaining=(realScanState.classified||[]).filter(function(c){return !realScanState.decisions.has(c.email.id);}).length;
+    const resume=confirm('A scan is already in review ('+remaining+' candidate'+(remaining===1?'':'s')+' left). OK to resume that one; Cancel to discard and run a fresh re-review sweep.');
+    if(resume){showRealScanModal();renderRealScanReview();return;}
+    realScanState=null;
+  }
+  const cat=(scanSettings&&scanSettings.reviewCategory||'').trim();
+  if(!cat){
+    alert('No re-review category configured. Open Scan settings and set a value for "Re-review category" (typically "SPP-CRM-Review"), then apply that category to the email(s) in Outlook before running this scan.');
+    return;
+  }
+  const days=(scanSettings&&scanSettings.reviewWindowDays)||365;
+  realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),selectedEmailIds:new Set(),daysBack:days,fetchedSoFar:0,fetchedPages:0,reviewMode:true,reviewCategory:cat};
+  showRealScanModal();
+  renderRealScanProgress();
+  try{
+    const emails=await fetchRecentEmails(days,{categoryFilter:cat,onProgress:function(p){
+      if(!realScanState)return;
+      realScanState.fetchedSoFar=p.total;
+      realScanState.fetchedPages=p.page;
+      if(p.phase==='throttled')realScanState.throttled=true;
+      if(p.phase==='retrying'){realScanState.retrying={attempt:p.attempt,backoffMs:p.backoffMs,errorMsg:p.errorMsg};}
+      else if(p.phase==='fetching'){realScanState.retrying=null;}
+      renderRealScanProgress();
+    }});
+    if(!realScanState)return;
+    /* Pull conversation siblings for every tagged email so a chain
+       represented by ONE tagged message still surfaces the whole thread.
+       We fetch each unique conversationId via /me/messages?$filter=
+       conversationId eq '...'. Bounded so a single chain with 100 messages
+       doesn't bloat — cap per-conversation at 50. */
+    const seenIds=new Set(emails.map(function(e){return e.id;}));
+    const convIds=Array.from(new Set(emails.map(function(e){return e.conversationId;}).filter(Boolean)));
+    realScanState.phase='chaining';renderRealScanProgress();
+    const tokenForChain=await getAccessToken(['Mail.Read']).catch(function(){return null;});
+    if(tokenForChain){
+      for(let i=0;i<convIds.length;i++){
+        if(!realScanState)return;
+        const cid=convIds[i];
+        const url='https://graph.microsoft.com/v1.0/me/messages?$filter='+encodeURIComponent("conversationId eq '"+String(cid).replace(/'/g,"''")+"'")+'&$select=id,subject,from,toRecipients,ccRecipients,categories,bodyPreview,conversationId,receivedDateTime,hasAttachments,isRead,webLink&$top=50';
+        try{
+          const r=await fetch(url,{headers:{'Authorization':'Bearer '+tokenForChain,'ConsistencyLevel':'eventual'}});
+          if(!r.ok)continue;
+          const j=await r.json();
+          (j.value||[]).forEach(function(m){
+            if(!m||!m.id||seenIds.has(m.id))return;
+            seenIds.add(m.id);
+            /* Normalise to the same shape fetchRecentEmails produces. */
+            const fromAddr=(m.from&&m.from.emailAddress&&m.from.emailAddress.address)||'';
+            const fromName=(m.from&&m.from.emailAddress&&m.from.emailAddress.name)||'';
+            const to=(m.toRecipients||[]).map(function(t){return t.emailAddress&&t.emailAddress.address;}).filter(Boolean);
+            const cc=(m.ccRecipients||[]).map(function(t){return t.emailAddress&&t.emailAddress.address;}).filter(Boolean);
+            emails.push({
+              id:m.id,subject:m.subject||'',fromEmail:fromAddr,fromName:fromName,
+              from:fromName||fromAddr,to:to,cc:cc,
+              categories:m.categories||[],bodyPreview:m.bodyPreview||'',
+              conversationId:m.conversationId||null,date:m.receivedDateTime||'',
+              receivedAt:m.receivedDateTime||'',hasAttachments:!!m.hasAttachments,
+              isRead:!!m.isRead,webLink:m.webLink||''
+            });
+          });
+        }catch(_){}
+      }
+    }
+    if(!realScanState)return;
+    realScanState.emails=emails;
+    realScanState.phase='matching';renderRealScanProgress();
+    await new Promise(function(r){setTimeout(r,30);});
+    if(!realScanState)return;
+    realScanState.classified=matchEmailsBatch(emails);
+    realScanState.phase='review';
+    renderRealScanReview();
+  }catch(e){
+    if(!realScanState)return;
+    realScanState.phase='error';
+    realScanState.error=(e&&e.message)||String(e);
+    renderRealScanProgress();
   }
 }
 /* Phase 8v-3i: render the simplified scan strip on the dashboard. Shows
@@ -8518,7 +8682,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ak · project-merge-button-and-ref-aliases'
+      build:'2026-05-08al · find-emails-to-re-review'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8683,7 +8847,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ak · project-merge-button-and-ref-aliases';
+const BACKUP_BUILD='2026-05-08al · find-emails-to-re-review';
 function exportBackup(){
   const payload={
     _meta:{
@@ -11890,7 +12054,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ak · project-merge-button-and-ref-aliases','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08al · find-emails-to-re-review','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
