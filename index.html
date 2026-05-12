@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ab · new-project-customer-bt-fields</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ac · revert-layout-click-to-edit-roles</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1290,6 +1290,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="modal-foot">
       <button class="btn btn-sm" onclick="hideNewProjectModal()">Cancel</button>
       <button class="btn btn-sm btn-primary" onclick="createNewProjectFromModal()">Create project</button>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 8v-3af: BT TYPE list editor. Inline editor for the BT TYPE
+     dropdown values — opens from the "(edit list)" link on the customer
+     detail page so users don't have to dig through Scan settings. -->
+<div class="modal-bg" id="bttype-list-modal" style="z-index:116;">
+  <div class="modal-box w400">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Edit BT TYPE list</div>
+        <div class="modal-sub">These values populate the Customer Type (BT TYPE) dropdown on every customer record. Add new categories or remove ones you don't use. Changes save instantly.</div>
+      </div>
+      <button class="xb" onclick="hideBtTypeListEditor()">×</button>
+    </div>
+    <div class="modal-body" id="bttype-list-body">
+      <!-- populated by renderBtTypeListEditor() -->
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-sm btn-primary" onclick="hideBtTypeListEditor()">Done</button>
     </div>
   </div>
 </div>
@@ -8037,7 +8058,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ab · new-project-customer-bt-fields'
+      build:'2026-05-08ac · revert-layout-click-to-edit-roles'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8202,7 +8223,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ab · new-project-customer-bt-fields';
+const BACKUP_BUILD='2026-05-08ac · revert-layout-click-to-edit-roles';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8507,8 +8528,76 @@ function toggleCompanyRoleCheckbox(roleCode,cb){
   }
   companyOverrides[norm].roles=cur;
   persistCompanyOverrides();
-  /* No full re-render — preserves focus + cheap. Just update the avatar
-     class so the colour stays consistent. */
+  /* Live-update the read-mode text inline so the cell shows the new
+     selection the moment a box is ticked. No full re-render — preserves
+     the edit-mode state. */
+  const readTxt=document.getElementById('cco-roles-read-text');
+  if(readTxt)readTxt.textContent=cur.length?rolesLabel(cur):'Other';
+}
+/* Click-to-edit toggle for the roles cell on the customer detail page. */
+function _showCompanyRolesEdit(){
+  const r=document.getElementById('cco-roles-read');
+  const e=document.getElementById('cco-roles-edit');
+  if(r)r.style.display='none';
+  if(e)e.style.display='block';
+}
+function _hideCompanyRolesEdit(){
+  const r=document.getElementById('cco-roles-read');
+  const e=document.getElementById('cco-roles-edit');
+  if(e)e.style.display='none';
+  if(r)r.style.display='block';
+}
+
+/* --- BT TYPE list editor — opens a focused modal so Richard doesn't
+   have to hunt through Scan settings. Reuses the existing chip-editor
+   pattern with a single field. --- */
+function openBtTypeListEditor(){
+  const m=document.getElementById('bttype-list-modal');
+  if(!m)return;
+  m.classList.add('open');
+  renderBtTypeListEditor();
+}
+function hideBtTypeListEditor(){
+  const m=document.getElementById('bttype-list-modal');
+  if(m)m.classList.remove('open');
+  /* Refresh the dropdown on the open customer page so new entries appear */
+  if(typeof renderCompanyDetail==='function')renderCompanyDetail();
+}
+function renderBtTypeListEditor(){
+  const wrap=document.getElementById('bttype-list-body');
+  if(!wrap)return;
+  const items=(_getBtTypeOptions()).map(function(v,i){
+    return '<div style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #d3dce6;border-radius:4px;padding:3px 5px 3px 9px;font-size:12px;margin:0 4px 4px 0;">'
+      +'<span>'+esc(v)+'</span>'
+      +'<button onclick="_btTypeRemove('+i+')" style="background:none;border:none;cursor:pointer;color:#888;font-size:14px;line-height:1;padding:0 2px;" title="Remove">×</button>'
+    +'</div>';
+  }).join('');
+  wrap.innerHTML='<div style="display:flex;flex-wrap:wrap;align-items:center;min-height:30px;">'+items+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px;">'
+    +'<input type="text" id="bttype-add-inp" placeholder="e.g. Specifier" style="flex:1;padding:6px 8px;font-size:12px;border:1px solid #d3dce6;border-radius:4px;" onkeydown="if(event.key===\'Enter\'){_btTypeAdd();event.preventDefault();}"/>'
+    +'<button class="btn btn-sm btn-primary" onclick="_btTypeAdd()">Add</button>'
+    +'</div>';
+}
+function _btTypeAdd(){
+  const inp=document.getElementById('bttype-add-inp');
+  if(!inp)return;
+  const v=(inp.value||'').trim();
+  if(!v)return;
+  if(!Array.isArray(scanSettings.btTypeOptions))scanSettings.btTypeOptions=[];
+  /* Case-insensitive dedupe */
+  if(scanSettings.btTypeOptions.some(function(x){return String(x).toLowerCase()===v.toLowerCase();})){
+    inp.value='';return;
+  }
+  scanSettings.btTypeOptions.push(v);
+  persistScanSettings();
+  inp.value='';
+  renderBtTypeListEditor();
+}
+function _btTypeRemove(idx){
+  if(!Array.isArray(scanSettings.btTypeOptions))return;
+  scanSettings.btTypeOptions.splice(idx,1);
+  persistScanSettings();
+  renderBtTypeListEditor();
 }
 function saveCompanyBtType(val){
   if(!currentCompany)return;
@@ -9002,30 +9091,46 @@ function renderCoDetailsSection(co){
   return `
     <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:16px 18px;margin-bottom:14px;">
       <div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:10px;">Derived from project data</div>
-      <!-- Phase 8v-3af: replace single Type cell with role checkboxes
-           (multi-select). Address + BT TYPE + Customer Status sit in a
-           three-cell sub-block so the two new dropdowns fit next to the
-           address textarea. -->
+      <!-- Phase 8v-3af (reworked): original two-column grid preserved.
+           - Type cell becomes a click-to-edit roles cell: text by default,
+             checkboxes on click.
+           - Address now spans 2 rows so BT TYPE (top) and Customer Status
+             (bottom) fit in column 2 alongside it. -->
       <div class="cco-fact-grid">
-        <div class="cco-fact" style="grid-column:1 / span 2;">
-          <div class="cco-fact-lbl">Roles (tick all that apply)</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;">
-            ${CUSTOMER_ROLES_ORDER.map(function(code){
-              const lbl=CUSTOMER_ROLE_LABELS[code]||code;
-              const isOn=(Array.isArray(co.roles)&&co.roles.indexOf(code)>=0);
-              return '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#333;cursor:pointer;padding:4px 10px;border:1px solid '+(isOn?'#185fa5':'#d3dce6')+';border-radius:5px;background:'+(isOn?'#f0f6ff':'#fff')+';">'
-                +'<input type="checkbox" class="cco-role-cb" data-role="'+esc(code)+'"'+(isOn?' checked':'')+' onchange="toggleCompanyRoleCheckbox(\''+esc(code)+'\',this)" style="margin:0;"/>'
-                +'<span>'+esc(lbl)+'</span></label>';
-            }).join('')}
+        <div class="cco-fact" id="cco-roles-cell">
+          <div class="cco-fact-lbl">Type</div>
+          <!-- READ MODE — shows the role names as a single text line. -->
+          <div id="cco-roles-read" class="cco-fact-val cco-roles-read" onclick="_showCompanyRolesEdit()" title="Click to edit roles" style="cursor:pointer;padding:3px 6px;margin:-3px -6px;border:1px solid transparent;border-radius:5px;transition:border-color 0.12s,background 0.12s;">
+            <span id="cco-roles-read-text">${esc((Array.isArray(co.roles)&&co.roles.length)?rolesLabel(co.roles):typeLabel(co.type))}</span>
+            <span style="font-size:10px;color:#bbb;margin-left:6px;">✎</span>
+          </div>
+          <!-- EDIT MODE — hidden by default; checkbox chips. -->
+          <div id="cco-roles-edit" style="display:none;margin-top:4px;">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${CUSTOMER_ROLES_ORDER.map(function(code){
+                const lbl=CUSTOMER_ROLE_LABELS[code]||code;
+                const isOn=(Array.isArray(co.roles)&&co.roles.indexOf(code)>=0);
+                return '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#333;cursor:pointer;padding:4px 10px;border:1px solid '+(isOn?'#185fa5':'#d3dce6')+';border-radius:5px;background:'+(isOn?'#f0f6ff':'#fff')+';">'
+                  +'<input type="checkbox" class="cco-role-cb" data-role="'+esc(code)+'"'+(isOn?' checked':'')+' onchange="toggleCompanyRoleCheckbox(\''+esc(code)+'\',this)" style="margin:0;"/>'
+                  +'<span>'+esc(lbl)+'</span></label>';
+              }).join('')}
+            </div>
+            <div style="text-align:right;margin-top:6px;"><button class="btn btn-sm" onclick="_hideCompanyRolesEdit()" style="font-size:11px;padding:3px 10px;">Done</button></div>
           </div>
         </div>
         <div class="cco-fact"><div class="cco-fact-lbl">Projects</div><div class="cco-fact-val">${co.projects.length} (${stageCounts.quoting} quoting, ${stageCounts.spec} spec, ${stageCounts.won} won, ${stageCounts.lost} lost)</div></div>
         <div class="cco-fact"><div class="cco-fact-lbl">Contacts on file</div><div class="cco-fact-val">${co.contacts.length}</div></div>
-        <!-- Address occupies column 1 and spans 2 rows so BT TYPE + Status
-             stack neatly in column 2 alongside it. -->
+        <div class="cco-fact"><div class="cco-fact-lbl">Main phone</div><input id="cco-mainphone-inp" class="cco-fact-inp" type="text" value="${esc(co.mainPhone||(mainPhone?mainPhone[0]:''))}" placeholder="Not yet known" onchange="saveCompanyMainPhone(this.value)" title="Switchboard / general office number. Edit and tab away to save."></div>
+        <div class="cco-fact"><div class="cco-fact-lbl">Email domain</div><div class="cco-fact-val${mainDomain?'':' muted'}">${mainDomain?'@'+esc(mainDomain[0]):'Not yet known'}</div></div>
+        <div class="cco-fact"><div class="cco-fact-lbl">Last activity</div><div class="cco-fact-val${lastActivity?'':' muted'}">${lastActivity?esc(fmtDate(lastActivity.date))+' – '+esc(lastActivity.title||lastActivity.type||'entry'):'No recent activity'}</div></div>
+        <!-- Address spans 2 rows so BT TYPE + Status fit next to it in
+             column 2 — exactly what Richard asked for. -->
         <div class="cco-fact" style="grid-row:span 2;"><div class="cco-fact-lbl">Address</div><textarea id="cco-address-inp" class="cco-fact-inp cco-fact-inp-multi" placeholder="Not yet captured" onchange="saveCompanyAddress(this.value)" title="Edit and tab away to save." style="min-height:96px;">${esc(co.address||'')}</textarea></div>
         <div class="cco-fact">
-          <div class="cco-fact-lbl">Customer Type (BT TYPE)</div>
+          <div class="cco-fact-lbl" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Customer Type (BT TYPE)</span>
+            <a href="javascript:void(0)" onclick="openBtTypeListEditor()" style="font-size:10px;color:#185fa5;text-transform:none;letter-spacing:0;font-weight:400;text-decoration:none;" title="Add or remove options in this dropdown">edit list</a>
+          </div>
           <select id="cco-bttype-inp" class="cco-fact-inp" onchange="saveCompanyBtType(this.value)" style="width:100%;padding:5px 6px;background:#fff;">
             <option value=""${co.btType?'':' selected'}>— Not set —</option>
             ${_getBtTypeOptions().map(function(v){return '<option value="'+esc(v)+'"'+(co.btType===v?' selected':'')+'>'+esc(v)+'</option>';}).join('')}
@@ -9038,9 +9143,6 @@ function renderCoDetailsSection(co){
             ${CUSTOMER_STATUS_OPTIONS.map(function(v){return '<option value="'+esc(v)+'"'+(co.customerStatus===v?' selected':'')+'>'+esc(v)+'</option>';}).join('')}
           </select>
         </div>
-        <div class="cco-fact"><div class="cco-fact-lbl">Main phone</div><input id="cco-mainphone-inp" class="cco-fact-inp" type="text" value="${esc(co.mainPhone||(mainPhone?mainPhone[0]:''))}" placeholder="Not yet known" onchange="saveCompanyMainPhone(this.value)" title="Switchboard / general office number. Edit and tab away to save."></div>
-        <div class="cco-fact"><div class="cco-fact-lbl">Email domain</div><div class="cco-fact-val${mainDomain?'':' muted'}">${mainDomain?'@'+esc(mainDomain[0]):'Not yet known'}</div></div>
-        <div class="cco-fact" style="grid-column:1 / span 2;"><div class="cco-fact-lbl">Last activity</div><div class="cco-fact-val${lastActivity?'':' muted'}">${lastActivity?esc(fmtDate(lastActivity.date))+' – '+esc(lastActivity.title||lastActivity.type||'entry'):'No recent activity'}</div></div>
       </div>
     </div>
     <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:16px 18px;">
@@ -10994,7 +11096,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ab · new-project-customer-bt-fields','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ac · revert-layout-click-to-edit-roles','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
