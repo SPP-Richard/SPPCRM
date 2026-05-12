@@ -709,7 +709,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08al · find-emails-to-re-review</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08an · company-reminder-calendar-push-and-critical-strip</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -3444,6 +3444,98 @@ function _buildProjectDeepLink(projectId){
     return base+'?project='+encodeURIComponent(projectId);
   }catch(e){return '';}
 }
+/* ========================================================================
+   Phase 8v-3am — reminder calendar rules
+   ========================================================================
+   - All reminder dates are Mon-Fri only. A weekend date shifts to Monday.
+   - All reminder calendar events fire at 10:00 local time on the due date.
+   - If a reminder is not done AND not snoozed within 7 days of its due
+     date, an auto-follow-up reminder gets generated for the next working
+     day (also 10:00). The original is superseded so the chase queue
+     shows the latest only, and the original's calendar event is closed.
+   - Snooze (already-coded +3 days) flows through the weekend-shift too.
+   These helpers are used by every reminder creation/snooze/sweep path. */
+function _isWeekendIso(iso){
+  if(!iso||typeof iso!=='string')return false;
+  const d=new Date(iso.slice(0,10)+'T00:00:00');
+  if(isNaN(d.getTime()))return false;
+  const day=d.getDay();
+  return day===0||day===6; /* 0=Sun, 6=Sat */
+}
+function _shiftIsoToNextWeekday(iso){
+  if(!iso||typeof iso!=='string')return iso;
+  /* Parse at noon LOCAL time so timezone offsets can't drift us into the
+     previous calendar day on toISOString round-trip. Read back via
+     getFullYear/getMonth/getDate (local components) for the same reason. */
+  const d=new Date(iso.slice(0,10)+'T12:00:00');
+  if(isNaN(d.getTime()))return iso;
+  while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);
+  const yyyy=d.getFullYear();
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  const dd=String(d.getDate()).padStart(2,'0');
+  return yyyy+'-'+mm+'-'+dd;
+}
+/* Returns today's ISO date if it's a weekday, otherwise the next Monday. */
+function _todayOrNextWeekdayIso(){
+  return _shiftIsoToNextWeekday(new Date().toISOString().slice(0,10));
+}
+/* Returns an ISO datetime for 10:00 local on the weekend-shifted date.
+   Format matches the existing snooze flow: "YYYY-MM-DDT10:00:00" then
+   .toISOString() so the existing _createOutlookFollowUpEvent helper
+   handles the timezone composition. */
+function _reminderDueIsoAt10am(iso){
+  const shifted=_shiftIsoToNextWeekday(iso);
+  return new Date(shifted+'T10:00:00').toISOString();
+}
+
+/* Phase 8v-3an: company-reminder calendar push. Same shape as
+   _createOutlookFollowUpEvent but anchored on a company name instead of
+   a project + email. Body deep-links back to the company detail page via
+   ?company=NAME so a click in Outlook opens the customer record. */
+async function _createCompanyReminderEvent(companyName,reminder,dueIso,opts){
+  const token=await getAccessToken(['Calendars.ReadWrite']);
+  if(!token)throw new Error('Calendar push: not signed in or Calendars.ReadWrite not granted');
+  const startIso=dueIso;
+  const endIso=new Date(new Date(dueIso).getTime()+30*60*1000).toISOString();
+  const escHtml=function(s){return String(s||'').replace(/[<>&]/g,function(c){return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;';});};
+  const noteHtml=(opts&&opts.note)?'<p><strong>Note:</strong> '+escHtml(opts.note)+'</p>':'';
+  /* Build a deep-link back to the customer detail page so clicking the
+     calendar event opens the right CRM record. */
+  let companyUrl='';
+  try{
+    const base=window.location.pathname.replace(/\/?index\.html$/,'/').replace(/[^/]*$/,'');
+    companyUrl=window.location.origin+base+'?company='+encodeURIComponent(companyName||'');
+  }catch(_){}
+  const link=companyUrl?'<p><a href="'+companyUrl+'">Open customer in SPP CRM ↗</a></p>':'';
+  const text=(reminder&&reminder.text)||'Customer reminder';
+  const bodyHtml=
+    '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.45;">'
+    +'<p>Customer reminder from SPP CRM.</p>'
+    +'<p><strong>Customer:</strong> '+escHtml(companyName||'(unnamed)')+'</p>'
+    +'<p><strong>Reminder:</strong> '+escHtml(text)+'</p>'
+    +noteHtml
+    +link
+    +'</div>';
+  const evt={
+    subject:'Reminder: '+text.substring(0,180)+' (for '+(companyName||'customer')+')',
+    start:{dateTime:_isoToCalendarLocal(startIso),timeZone:'Europe/London'},
+    end:{dateTime:_isoToCalendarLocal(endIso),timeZone:'Europe/London'},
+    body:{contentType:'HTML',content:bodyHtml},
+    reminderMinutesBeforeStart:15,
+    isReminderOn:true
+  };
+  const r=await fetch('https://graph.microsoft.com/v1.0/me/events',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify(evt)
+  });
+  if(!r.ok){
+    let detail='';try{const j=await r.json();detail=(j.error&&(j.error.message||j.error.code))||'';}catch(_){}
+    throw new Error('Customer reminder calendar push failed: HTTP '+r.status+(detail?' — '+detail:''));
+  }
+  return await r.json();
+}
+
 async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
   const token=await getAccessToken(['Calendars.ReadWrite']);
   if(!token)throw new Error('Calendar push: not signed in or Calendars.ReadWrite not granted');
@@ -4579,9 +4671,157 @@ function updateStatCards(){
   try{renderOutstandingScanBanner();}catch(e){}
 }
 
-/* Chase Queue: non-critical overdue-by-7 reminders on company notes.
-   Critical reminders are assumed to have been auto-pushed to calendar
-   already, so they don't appear here. */
+/* ========================================================================
+   Phase 8v-3am — 7-day auto-follow-up sweep
+   ========================================================================
+   Runs once per day on dashboard render. For every reminder that:
+     - is not done
+     - is not already superseded by an auto-follow-up
+     - has a due date >= 7 days in the past
+   generate a fresh reminder dated next working day at 10:00 carrying the
+   original text prefixed with "[7 DAYS LATE]" plus the original notes,
+   push a calendar event for the new one, and mark the original as
+   superseded + close its calendar event. Snooze counts as a new reminder
+   so its clock starts from the new date — the sweep doesn't re-fire on
+   the snoozed parent.
+   Tracker: localStorage 'spp.lastFollowUpSweep' = YYYY-MM-DD (last run). */
+const _SEVEN_DAY_SWEEP_KEY='spp.lastFollowUpSweep';
+function _isReminderPast7Days(remDate){
+  if(!remDate)return false;
+  const d=new Date(remDate.slice(0,10)+'T00:00:00');
+  if(isNaN(d.getTime()))return false;
+  const ageMs=Date.now()-d.getTime();
+  return ageMs>=7*86400*1000;
+}
+function _isFollowUpReminderText(text){
+  return typeof text==='string'&&text.indexOf('[7 DAYS LATE]')===0;
+}
+async function _run7DayFollowUpSweep(){
+  /* Guard: run once per day. */
+  const todayIso=new Date().toISOString().slice(0,10);
+  let last=null;
+  try{last=localStorage.getItem(_SEVEN_DAY_SWEEP_KEY);}catch(_){}
+  if(last===todayIso)return {generated:0,skipped:'already-run-today'};
+  let generated=0;
+  const newWeekday=_todayOrNextWeekdayIso();
+  /* Project reminders */
+  (projects||[]).forEach(function(p){
+    const reminders=(p.reminders||[]).slice();
+    reminders.forEach(function(r){
+      if(!r||r.done||r.supersededBy||r.autoFollowUpGenerated)return;
+      if(!_isReminderPast7Days(r.date))return;
+      /* Compose the follow-up. */
+      const origDateLabel=fmtDate(r.date)||r.date||'(no date)';
+      const newId=uid();
+      const baseText=_isFollowUpReminderText(r.text)?r.text:('[7 DAYS LATE] '+(r.text||'Follow up'));
+      const stitchedNotes='Auto-generated 7-day follow-up. Original reminder dated '+origDateLabel+' was not actioned within 7 days.\n'
+        +(r.notes?'Original notes:\n'+r.notes:'');
+      const newRem={
+        id:newId,
+        text:baseText,
+        date:newWeekday,
+        soon:newWeekday<=todayIso,
+        done:false,
+        notes:stitchedNotes,
+        autoFollowUpFor:r.id
+      };
+      if(r.company)newRem.company=r.company;
+      p.reminders.push(newRem);
+      const tlEntry={id:uid(),type:'reminder',date:newWeekday,author:'System (7-day follow-up)',action:'auto-generated follow-up',remText:baseText,remNotes:stitchedNotes,done:false,remId:newId};
+      if(r.company)tlEntry.company=r.company;
+      p.timeline.unshift(tlEntry);
+      /* Mark the original as superseded so the chase queue stops showing
+         it. We do NOT mark it done — the original was never actioned. */
+      r.supersededBy=newId;
+      r.autoFollowUpGenerated=true;
+      generated++;
+      /* Close the original calendar event + push a new one for the
+         follow-up. Both are best-effort. */
+      if(r.calendarEventId){
+        const baseSubj=r.calendarEventSubject||(r.text?'Reminder: '+r.text:'Reminder');
+        _updateOutlookEventCompletion(r.calendarEventId,true,baseSubj)
+          .catch(function(err){try{console.warn('[Phase 8v-3am] close-original-event failed',err);}catch(_){}});
+      }
+      try{
+        const dueIso=_reminderDueIsoAt10am(newWeekday);
+        const projUrl=(typeof _buildProjectDeepLink==='function')?_buildProjectDeepLink(p.id):'';
+        const pseudoEmail={subject:baseText,fromEmail:'',from:'',webLink:projUrl};
+        _createOutlookFollowUpEvent(p,pseudoEmail,dueIso,{note:stitchedNotes})
+          .then(function(evt){
+            const fresh=p.reminders.find(function(x){return x.id===newId;});
+            if(fresh&&evt){
+              fresh.calendarEventId=evt.id;
+              fresh.calendarEventWebLink=evt.webLink||'';
+              fresh.calendarEventSubject=evt.subject||'';
+              try{persistProjects();}catch(_){}
+            }
+          }).catch(function(err){try{console.warn('[Phase 8v-3am] push-followup-event failed',err);}catch(_){}});
+      }catch(_){}
+    });
+  });
+  /* Company-note reminders */
+  Object.keys(companyOverrides||{}).forEach(function(coKey){
+    const ov=companyOverrides[coKey];
+    if(!ov||!Array.isArray(ov.noteEntries))return;
+    const notes=ov.noteEntries.slice();
+    notes.forEach(function(n){
+      const r=n&&n.reminder;
+      if(!r||r.done||r.supersededBy||r.autoFollowUpGenerated)return;
+      if(!_isReminderPast7Days(r.date))return;
+      const origDateLabel=fmtDate(r.date)||r.date||'(no date)';
+      const baseText=_isFollowUpReminderText(r.text)?r.text:('[7 DAYS LATE] '+(r.text||'Follow up'));
+      const stitchedNotes='Auto-generated 7-day follow-up. Original reminder dated '+origDateLabel+' was not actioned within 7 days.\n'
+        +(n.text?'Original note:\n'+n.text:'');
+      const newNote={
+        id:(typeof nextCompanyNoteId==='function')?nextCompanyNoteId():('cn-fu-'+Date.now()),
+        date:newWeekday,
+        author:'System (7-day follow-up)',
+        text:stitchedNotes,
+        reminder:{text:baseText,date:newWeekday,done:false,autoFollowUpFor:n.id}
+      };
+      ov.noteEntries.unshift(newNote);
+      r.supersededBy=newNote.id;
+      r.autoFollowUpGenerated=true;
+      generated++;
+      /* Phase 8v-3an: close the original calendar event + push a fresh
+         one for the auto-follow-up. Both best-effort. */
+      if(r.calendarEventId){
+        const baseSubj=r.calendarEventSubject||('Reminder: '+(r.text||''));
+        _updateOutlookEventCompletion(r.calendarEventId,true,baseSubj)
+          .catch(function(err){try{console.warn('[Phase 8v-3an] company sweep — old event close failed',err);}catch(_){}});
+      }
+      try{
+        const coName=(ov.displayName||coKey.replace(/\b\w/g,function(c){return c.toUpperCase();}));
+        const dueIso=_reminderDueIsoAt10am(newWeekday);
+        _createCompanyReminderEvent(coName,newNote.reminder,dueIso,{note:stitchedNotes}).then(function(evt){
+          if(!evt)return;
+          const fresh=(ov.noteEntries||[]).find(function(x){return x.id===newNote.id;});
+          if(fresh&&fresh.reminder){
+            fresh.reminder.calendarEventId=evt.id;
+            fresh.reminder.calendarEventWebLink=evt.webLink||'';
+            fresh.reminder.calendarEventSubject=evt.subject||'';
+            try{persistCompanyOverrides();}catch(_){}
+          }
+        }).catch(function(err){try{console.warn('[Phase 8v-3an] company sweep — new event push failed',err);}catch(_){}});
+      }catch(_){}
+    });
+  });
+  if(generated>0){
+    try{persistProjects();}catch(_){}
+    try{persistCompanyOverrides();}catch(_){}
+  }
+  try{localStorage.setItem(_SEVEN_DAY_SWEEP_KEY,todayIso);}catch(_){}
+  return {generated,skipped:false};
+}
+/* Hook the sweep into dashboard render. Idempotent + cheap when already
+   run today, so calling on every render is fine. */
+function _trigger7DaySweep(){
+  try{_run7DayFollowUpSweep().catch(function(err){try{console.warn('[Phase 8v-3am] sweep failed',err);}catch(_){}});}catch(_){}
+}
+
+/* Chase Queue: overdue-by-7 reminders on company notes.
+   Phase 8v-3am: Critical concept dropped — every reminder flows through
+   the chase queue. Auto-follow-up sweep handles the 7-day-overdue case. */
 function isCurrentUserAdmin(){
   const me=salesReps.find(r=>r.name===ME);
   return !!(me&&me.admin);
@@ -4600,6 +4840,10 @@ function _toActionItems(){
     const reps=p.reminders||[];
     for(const r of reps){
       if(!r||r.done)continue;
+      /* Phase 8v-3am: hide reminders that have been superseded by an
+         auto-follow-up. The follow-up itself is a separate reminder and
+         shows in its own right. */
+      if(r.supersededBy)continue;
       if(!r.date)continue;
       if(r.date>cutoff)continue; /* future, not yet within the 7-day window */
       const overdue=r.date<todayIso;
@@ -4622,6 +4866,10 @@ function _toActionItems(){
   return items;
 }
 function renderChaseQueue(){
+  /* Phase 8v-3am: opportunistic 7-day sweep on every chase-queue render.
+     Idempotent via the per-day lastFollowUpSweep tracker — only does work
+     once per calendar day. Doesn't block the UI; async fire-and-forget. */
+  _trigger7DaySweep();
   const list=document.getElementById('chase-list');
   const countBadge=document.getElementById('chase-count-badge');
   const forceBtn=document.getElementById('chase-force-all');
@@ -4696,9 +4944,9 @@ async function toActionSnooze(projectId,reminderId){
   if(!p)return;
   const r=(p.reminders||[]).find(function(x){return x.id===reminderId;});
   if(!r){alert('Reminder not found.');return;}
-  /* New date: 3 days from today (YYYY-MM-DD). */
+  /* New date: 3 days from today, weekend-shifted (Phase 8v-3am). */
   const d=new Date();d.setDate(d.getDate()+3);
-  const newDate=d.toISOString().slice(0,10);
+  const newDate=_shiftIsoToNextWeekday(d.toISOString().slice(0,10));
   const origDateLabel=fmtDate(r.date)||r.date||'(no date)';
   const newText=r.text||'Follow up';
   const stitchedNotes=
@@ -5166,7 +5414,10 @@ function chasePushAll(){
   let count=0;
   Object.entries(companyOverrides).forEach(([key,ov])=>{
     (ov.noteEntries||[]).forEach(n=>{
-      const r=n.reminder;if(!r||r.done||r.critical||r.chased)return;
+      /* Phase 8v-3am: Critical filter removed — every reminder flows
+         through the chase queue. Superseded reminders are filtered via
+         the supersededBy field instead. */
+      const r=n.reminder;if(!r||r.done||r.chased||r.supersededBy)return;
       if(!r.date)return;
       let threshold;
       if(r.snoozedUntil){threshold=r.snoozedUntil;}
@@ -7008,9 +7259,13 @@ function toggleRemCheck(){
 
 function saveReminder(){
   const text=document.getElementById('rem-text').value.trim();
-  const date=document.getElementById('rem-date').value;
+  let date=document.getElementById('rem-date').value;
   const notes=document.getElementById('rem-notes').value.trim();
   if(!currentProject)return;
+  /* Phase 8v-3am: weekend-shift the stored date — every reminder lands on
+     a working day. The 10:00 time-of-day is applied below for the calendar
+     push so the date math here can stay as a YYYY-MM-DD string. */
+  if(date)date=_shiftIsoToNextWeekday(date);
   if(editingRemId){
     const r=currentProject.reminders.find(r=>r.id===editingRemId);
     const ti=currentProject.timeline.find(t=>t.remId===editingRemId);
@@ -7048,9 +7303,10 @@ function saveReminder(){
     /* Phase 8v-2z + 8v-3a: calendar push for both email follow-ups and
        project-level reminders. */
     if(pendingReminderPushToCalendar){
-      const now=new Date();
-      const due=new Date(date+'T'+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':00');
-      const dueIso=due.toISOString();
+      /* Phase 8v-3am: every reminder calendar event fires at 10:00 local
+         on the (weekend-shifted) due date. Replaces the previous
+         "current-time-of-day" behaviour. */
+      const dueIso=_reminderDueIsoAt10am(date);
       const proj=currentProject;
       let evtPromise;
       if(pendingReminderEmailId){
@@ -8576,6 +8832,36 @@ function migrateNormaliseCompanies(){
   try{localStorage.setItem(KEY,'true');}catch(e){}
 }
 try{migrateNormaliseCompanies();}catch(e){try{console.warn('[Phase 8v-2w] migration failed',e);}catch(_){}}
+/* Phase 8v-3an: one-time strip of the dead `critical` field from every
+   reminder (project + company-note). The Critical concept was dropped in
+   Phase 8v-3am — every reminder now follows the same 10am/weekday/7-day
+   rules. The field was harmless to leave behind but worth removing so
+   JSON exports stay clean and no future logic accidentally branches on
+   stale data. Idempotent via localStorage flag. */
+function migrateStripCriticalFlag(){
+  const KEY='spp.migrated.stripCritical';
+  if(localStorage.getItem(KEY)==='true')return;
+  let stripped=0;
+  (projects||[]).forEach(function(p){
+    (p.reminders||[]).forEach(function(r){
+      if(r&&'critical' in r){delete r.critical;stripped++;}
+    });
+  });
+  Object.keys(companyOverrides||{}).forEach(function(k){
+    const ov=companyOverrides[k];
+    if(!ov||!Array.isArray(ov.noteEntries))return;
+    ov.noteEntries.forEach(function(n){
+      if(n&&n.reminder&&'critical' in n.reminder){delete n.reminder.critical;stripped++;}
+    });
+  });
+  if(stripped){
+    try{persistProjects();}catch(e){}
+    try{persistCompanyOverrides();}catch(e){}
+    try{console.log('[Phase 8v-3an] Stripped critical flag from '+stripped+' reminder(s)');}catch(e){}
+  }
+  try{localStorage.setItem(KEY,'true');}catch(e){}
+}
+try{migrateStripCriticalFlag();}catch(e){try{console.warn('[Phase 8v-3an] critical-strip migration failed',e);}catch(_){}}
 /* Phase 8m + 8u — Daily rolling snapshots, with optional File System Access
    storage for unlimited size + OneDrive sync.
    - When a data folder is connected (Phase 8u): snapshots are written to
@@ -8682,7 +8968,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08al · find-emails-to-re-review'
+      build:'2026-05-08an · company-reminder-calendar-push-and-critical-strip'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8847,7 +9133,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08al · find-emails-to-re-review';
+const BACKUP_BUILD='2026-05-08an · company-reminder-calendar-push-and-critical-strip';
 function exportBackup(){
   const payload={
     _meta:{
@@ -9788,6 +10074,13 @@ function companyToActionDone(name,noteId){
   const n=ov.noteEntries.find(function(x){return x.id===noteId;});
   if(!n||!n.reminder)return;
   n.reminder.done=true;
+  /* Phase 8v-3an: close the calendar event if there is one. Best-effort. */
+  if(n.reminder.calendarEventId){
+    const baseSubj=n.reminder.calendarEventSubject||('Reminder: '+(n.reminder.text||''));
+    _updateOutlookEventCompletion(n.reminder.calendarEventId,true,baseSubj)
+      .then(function(updated){if(updated&&updated.subject){n.reminder.calendarEventSubject=updated.subject;try{persistCompanyOverrides();}catch(_){}}})
+      .catch(function(err){try{console.warn('[Phase 8v-3an] company reminder done — calendar close failed',err);}catch(_){}});
+  }
   persistCompanyOverrides();
   _renderCompanyChaseQueue();
   if(typeof renderCompanies==='function')renderCompanies(document.getElementById('co-search-box').value||'');
@@ -9798,9 +10091,9 @@ function companyToActionSnooze(name,noteId){
   if(!ov||!Array.isArray(ov.noteEntries))return;
   const n=ov.noteEntries.find(function(x){return x.id===noteId;});
   if(!n||!n.reminder)return;
-  /* Build new dates: +3 days at 10:00 local. */
+  /* Build new dates: +3 days at 10:00 local, weekend-shifted (Phase 8v-3am). */
   const d=new Date();d.setDate(d.getDate()+3);
-  const newDate=d.toISOString().slice(0,10);
+  const newDate=_shiftIsoToNextWeekday(d.toISOString().slice(0,10));
   const origDateLabel=fmtDate(n.reminder.date)||n.reminder.date||'(no date)';
   const newText=n.reminder.text||'Follow up';
   const stitchedNotes=
@@ -9808,9 +10101,17 @@ function companyToActionSnooze(name,noteId){
     +(n.text?'Original note:\n'+n.text:'');
   /* Mark the original done. */
   n.reminder.done=true;
+  /* Phase 8v-3an: close the original calendar event on snooze (the new
+     reminder will get a fresh one below). */
+  if(n.reminder.calendarEventId){
+    const origSubj=n.reminder.calendarEventSubject||('Reminder: '+(n.reminder.text||''));
+    _updateOutlookEventCompletion(n.reminder.calendarEventId,true,origSubj)
+      .catch(function(err){try{console.warn('[Phase 8v-3an] snooze — old event close failed',err);}catch(_){}});
+  }
   /* Append a new note + reminder for +3 days. */
+  const newNoteId=uid();
   const newNote={
-    id:uid(),
+    id:newNoteId,
     date:newDate,
     author:ME,
     text:stitchedNotes,
@@ -9818,6 +10119,22 @@ function companyToActionSnooze(name,noteId){
   };
   ov.noteEntries.push(newNote);
   persistCompanyOverrides();
+  /* Push a fresh calendar event for the snoozed reminder. */
+  setTimeout(function(){
+    try{
+      const dueIso=_reminderDueIsoAt10am(newDate);
+      _createCompanyReminderEvent(name,newNote.reminder,dueIso,{note:stitchedNotes}).then(function(evt){
+        if(!evt)return;
+        const fresh=(ov.noteEntries||[]).find(function(x){return x.id===newNoteId;});
+        if(fresh&&fresh.reminder){
+          fresh.reminder.calendarEventId=evt.id;
+          fresh.reminder.calendarEventWebLink=evt.webLink||'';
+          fresh.reminder.calendarEventSubject=evt.subject||'';
+          try{persistCompanyOverrides();}catch(_){}
+        }
+      }).catch(function(err){try{console.warn('[Phase 8v-3an] snooze — new event push failed',err);}catch(_){}});
+    }catch(_){}
+  },10);
   _renderCompanyChaseQueue();
   if(typeof renderCompanies==='function')renderCompanies(document.getElementById('co-search-box').value||'');
 }
@@ -10007,7 +10324,11 @@ function renderCoDetailsSection(co){
   const notesList=co.noteEntries.length?co.noteEntries.map(n=>{
     const rem=n.reminder;
     const t=n.type||'note';
-    const critBadge=rem&&rem.critical?`<span class="cco-crit-badge" title="Critical — skips the Chase Queue and auto-pushes to Outlook calendar after 7 days overdue">CRITICAL</span>`:'';
+    /* Phase 8v-3am: Critical concept dropped — every reminder now pushes
+       to Outlook calendar at 10:00 on the due date, and any reminder past
+       7 days overdue auto-generates a follow-up. Field kept on existing
+       data for backward compat but no UI surface. */
+    const critBadge='';
     const remBadge=rem
       ? `<span class="cco-rem-badge ${rem.done?'done':(rem.date<todayIso?'overdue':'pending')}" onclick="event.stopPropagation();toggleCompanyNoteReminderDone('${esc(n.id)}')" title="Click to mark ${rem.done?'pending':'done'}">
           <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
@@ -10500,7 +10821,9 @@ function _renderCoAddInputs(type){
       +'<input type="text" id="cco-note-text" class="cco-inp-select" style="width:100%;margin-bottom:8px;" placeholder="What to follow up on (e.g. tender response)"/>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
         +'<input type="date" id="cco-note-rem-date" class="cco-inp-select" style="max-width:160px;" value=""/>'
-        +'<label class="cco-rem-toggle" title="Critical reminders skip the Chase Queue and auto-create an Outlook calendar event if they are still open 7 days after the due date."><input type="checkbox" id="cco-note-rem-critical"/> Critical</label>'
+        /* Phase 8v-3am: Critical checkbox dropped. All reminders now push
+           to Outlook calendar at 10:00 on the due date (weekday) and
+           auto-follow-up after 7 days if not actioned. */
       +'</div>';
   }
   /* call-in / call-out / meeting all use the same 4-field layout */
@@ -10536,11 +10859,30 @@ async function addCompanyTimelineEntry(){
   if(currentCoTlType==='note'){
     entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text,reminder:null};
   }else if(currentCoTlType==='reminder'){
-    const rd=(document.getElementById('cco-note-rem-date').value||'').trim();
-    const critEl=document.getElementById('cco-note-rem-critical');
-    const critical=!!(critEl&&critEl.checked);
-    if(!rd){alert('Please pick a reminder date.');return;}
-    entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text:'Reminder set — '+text,reminder:{date:rd,text,done:false,critical}};
+    const rdRaw=(document.getElementById('cco-note-rem-date').value||'').trim();
+    if(!rdRaw){alert('Please pick a reminder date.');return;}
+    /* Phase 8v-3am: weekend-shift the reminder date — all reminders land
+       on a weekday. Critical flag dropped from the data model. */
+    const rd=_shiftIsoToNextWeekday(rdRaw);
+    entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text:'Reminder set — '+text,reminder:{date:rd,text,done:false}};
+    /* Phase 8v-3an: push to Outlook calendar at 10:00 on the weekday date.
+       Fire-and-forget; the calendar event id stamps onto the entry once
+       the promise resolves. */
+    setTimeout(function(){
+      try{
+        const dueIso=_reminderDueIsoAt10am(rd);
+        _createCompanyReminderEvent(currentCompany,entry.reminder,dueIso,{note:''}).then(function(evt){
+          if(!evt)return;
+          const fresh=ov.noteEntries.find(function(x){return x.id===entry.id;});
+          if(fresh&&fresh.reminder){
+            fresh.reminder.calendarEventId=evt.id;
+            fresh.reminder.calendarEventWebLink=evt.webLink||'';
+            fresh.reminder.calendarEventSubject=evt.subject||'';
+            try{persistCompanyOverrides();}catch(_){}
+          }
+        }).catch(function(err){try{console.warn('[Phase 8v-3an] company reminder push failed',err);}catch(_){}});
+      }catch(_){}
+    },10);
   }else{
     /* call-in / call-out / meeting */
     const notesEl=document.getElementById('cco-note-notes');
@@ -12054,7 +12396,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08al · find-emails-to-re-review','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08an · company-reminder-calendar-push-and-critical-strip','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
