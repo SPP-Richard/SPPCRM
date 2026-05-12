@@ -709,7 +709,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08an · company-reminder-calendar-push-and-critical-strip</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ao · customer-reminder-category-tag</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -3521,6 +3521,12 @@ async function _createCompanyReminderEvent(companyName,reminder,dueIso,opts){
     start:{dateTime:_isoToCalendarLocal(startIso),timeZone:'Europe/London'},
     end:{dateTime:_isoToCalendarLocal(endIso),timeZone:'Europe/London'},
     body:{contentType:'HTML',content:bodyHtml},
+    /* Phase 8v-3ao: SPP-Customer-Reminder category applied to every
+       company-reminder calendar event. Outlook auto-creates the category
+       on first sight, so no pre-setup needed. Lets the user folder/filter/
+       colour-rule customer reminders separately from project events
+       (which carry SPP-CRM-XXXX category instead). */
+    categories:['SPP-Customer-Reminder'],
     reminderMinutesBeforeStart:15,
     isReminderOn:true
   };
@@ -8968,7 +8974,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08an · company-reminder-calendar-push-and-critical-strip'
+      build:'2026-05-08ao · customer-reminder-category-tag'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -9133,7 +9139,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08an · company-reminder-calendar-push-and-critical-strip';
+const BACKUP_BUILD='2026-05-08ao · customer-reminder-category-tag';
 function exportBackup(){
   const payload={
     _meta:{
@@ -12396,7 +12402,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08an · company-reminder-calendar-push-and-critical-strip','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ao · customer-reminder-category-tag','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
