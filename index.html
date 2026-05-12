@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ai · customer-bulk-merge</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08aj · customer-record-merge</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1297,6 +1297,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="modal-foot">
       <button class="btn btn-sm" onclick="hideNewProjectModal()">Cancel</button>
       <button class="btn btn-sm btn-primary" onclick="createNewProjectFromModal()">Create project</button>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 8v-3aj: CUSTOMER MERGE PICKER — pick the target (survivor) when
+     merging the currently-open customer into another. Mirrors the project
+     picker pattern: search + scrollable list, click row to confirm + merge. -->
+<div class="modal-bg" id="cust-merge-modal" style="z-index:115;">
+  <div class="modal-box w400">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="cust-merge-title">Merge customer into…</div>
+        <div class="modal-sub" id="cust-merge-sub">Pick the target customer (the one that survives). Everything from this customer — projects, contacts, emails, notes, reminders — moves across.</div>
+      </div>
+      <button class="xb" onclick="hideCustomerMergePicker()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="text" class="mergepick-search" id="cust-merge-search" placeholder="Type to search by company name…" oninput="renderCustomerMergePickerList()" autocomplete="off"/>
+      <div class="mergepick-hint" style="margin-top:6px;font-size:11px;color:#666;">Matches highlight as you type. The current customer is filtered out.</div>
+      <div class="mergepick-list" id="cust-merge-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-sm" onclick="hideCustomerMergePicker()">Cancel</button>
     </div>
   </div>
 </div>
@@ -8460,7 +8483,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ai · customer-bulk-merge'
+      build:'2026-05-08aj · customer-record-merge'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8625,7 +8648,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ai · customer-bulk-merge';
+const BACKUP_BUILD='2026-05-08aj · customer-record-merge';
 function exportBackup(){
   const payload={
     _meta:{
@@ -9096,6 +9119,173 @@ async function removeCurrentProject(){
     }
   }catch(_){}
   alert('Project "'+p.name+'" removed.');
+}
+
+/* ========================================================================
+   Phase 8v-3aj — customer merge (acquisition / dedupe)
+   ========================================================================
+   Use case: customer A purchased customer B. Open B's page, click
+   "Merge into another customer…", pick A, confirm. The merge:
+   - moves every project reference from B → A (architect/contractor/subs/
+     contacts.company fields)
+   - rewrites the company label on every linked email from B → A so their
+     email chains show on A's page going forward
+   - appends B's notes + reminders to A's noteEntries
+   - merges scalar fields: target wins on conflict; source fills target's
+     blanks; never overwrites with a blank
+   - union-merges roles[]
+   - deletes B's companyOverride
+   Safety snapshot fires first so the merge is undoable from Data & storage. */
+let _custMergeState=null;
+function openCustomerMergePicker(){
+  if(!currentCompany){alert('No customer open.');return;}
+  const m=document.getElementById('cust-merge-modal');
+  if(!m)return;
+  _custMergeState={source:currentCompany};
+  const titleEl=document.getElementById('cust-merge-title');
+  const subEl=document.getElementById('cust-merge-sub');
+  if(titleEl)titleEl.textContent='Merge "'+currentCompany+'" into…';
+  if(subEl)subEl.textContent='Pick the target customer (the one that survives). Everything from "'+currentCompany+'" — projects, contacts, emails, notes, reminders — moves across, then this record is deleted.';
+  const inp=document.getElementById('cust-merge-search');
+  if(inp)inp.value='';
+  m.classList.add('open');
+  renderCustomerMergePickerList();
+  setTimeout(function(){if(inp)inp.focus();},50);
+}
+function hideCustomerMergePicker(){
+  const m=document.getElementById('cust-merge-modal');
+  if(m)m.classList.remove('open');
+  _custMergeState=null;
+}
+function renderCustomerMergePickerList(){
+  const wrap=document.getElementById('cust-merge-list');
+  if(!wrap||!_custMergeState)return;
+  const q=((document.getElementById('cust-merge-search')||{}).value||'').toLowerCase().trim();
+  const all=deriveCompanies();
+  const srcKey=(_custMergeState.source||'').toLowerCase();
+  let candidates=Object.values(all).filter(function(co){return (co.name||'').toLowerCase()!==srcKey;});
+  if(q)candidates=candidates.filter(function(co){return (co.name||'').toLowerCase().indexOf(q)>=0;});
+  candidates.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
+  if(!candidates.length){
+    wrap.innerHTML='<div style="padding:14px 12px;font-size:12px;color:#aaa;">No other customers match.</div>';
+    return;
+  }
+  wrap.innerHTML=candidates.slice(0,60).map(function(co){
+    const projCount=(co.projects||[]).length;
+    const conCount=(co.contacts||[]).length;
+    const nameArg=JSON.stringify(co.name).replace(/"/g,'&quot;');
+    const meta=projCount+' project'+(projCount===1?'':'s')+' · '+conCount+' contact'+(conCount===1?'':'s')+(co.btCode?' · BT '+esc(co.btCode):'');
+    return '<div class="mergepick-row" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f1ed;" onclick="_custMergePickSelect('+nameArg+')">'
+      +'<div style="font-size:13px;font-weight:500;color:#1a1a18;">'+esc(co.name)+'</div>'
+      +'<div style="font-size:11px;color:#888;margin-top:2px;">'+meta+'</div>'
+      +'</div>';
+  }).join('');
+}
+function _custMergePickSelect(targetName){
+  if(!_custMergeState||!targetName)return;
+  const source=_custMergeState.source;
+  if(!source||source===targetName){hideCustomerMergePicker();return;}
+  /* Build a breakdown for the confirm. */
+  const all=deriveCompanies();
+  const src=all[source.toLowerCase()]||{};
+  const projCount=(src.projects||[]).length;
+  const conCount=(src.contacts||[]).length;
+  /* Count emails currently labelled as the source company. */
+  let emailCount=0;
+  projects.forEach(function(p){(p.emails||[]).forEach(function(e){if(e&&(e.company||'').toLowerCase()===source.toLowerCase())emailCount++;});});
+  const noteCount=((companyOverrides[source.toLowerCase()]||{}).noteEntries||[]).length;
+  const summary='Merge "'+source+'" into "'+targetName+'"?\n\n'
+    +'This will move:\n'
+    +'  · '+projCount+' project link'+(projCount===1?'':'s')+'\n'
+    +'  · '+conCount+' contact'+(conCount===1?'':'s')+'\n'
+    +'  · '+emailCount+' email'+(emailCount===1?'':'s')+' (re-labelled to "'+targetName+'")\n'
+    +'  · '+noteCount+' note'+(noteCount===1?'':'s')+' / reminder'+(noteCount===1?'':'s')+'\n\n'
+    +'Then delete "'+source+'".\n\n'
+    +'Scalar field rules: "'+targetName+'" wins on conflict; "'+source+'" fills any blanks.\nRoles union-merge.\nThis cannot be undone without restoring a snapshot.';
+  if(!confirm(summary)){hideCustomerMergePicker();return;}
+  _executeCustomerMerge(source,targetName).then(function(){
+    hideCustomerMergePicker();
+  });
+}
+async function _executeCustomerMerge(sourceName,targetName){
+  const srcNorm=(sourceName||'').toLowerCase();
+  const tgtNorm=(targetName||'').toLowerCase();
+  if(!srcNorm||!tgtNorm||srcNorm===tgtNorm)return;
+  /* Safety snapshot */
+  try{if(typeof takeSnapshot==='function')await takeSnapshot('before-customer-merge');}
+  catch(e){try{console.warn('Pre-merge snapshot failed',e);}catch(_){}}
+  /* 1. Cascade across every project: rename in architect/contractor/subs/
+     contacts.company AND emails[].company. lastUpdated bumps where touched. */
+  projects.forEach(function(p){
+    let changed=false;
+    if((p.architect||'').toLowerCase()===srcNorm){p.architect=targetName;changed=true;}
+    if((p.contractor||'').toLowerCase()===srcNorm){p.contractor=targetName;changed=true;}
+    if(Array.isArray(p.subs)){
+      for(let i=0;i<p.subs.length;i++){
+        if((p.subs[i]||'').toLowerCase()===srcNorm){p.subs[i]=targetName;changed=true;}
+      }
+      /* Dedupe in case target was already a sub */
+      const seen=new Set();
+      p.subs=p.subs.filter(function(s){const k=(s||'').toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
+    }
+    if(Array.isArray(p.contacts)){
+      p.contacts.forEach(function(c){
+        if((c.company||'').toLowerCase()===srcNorm){c.company=targetName;changed=true;}
+      });
+    }
+    if(Array.isArray(p.emails)){
+      p.emails.forEach(function(e){
+        if((e.company||'').toLowerCase()===srcNorm){e.company=targetName;changed=true;}
+      });
+    }
+    if(Array.isArray(p.timeline)){
+      /* Timeline `sub` field carries the company label for grouping. */
+      p.timeline.forEach(function(t){
+        if(t&&(t.sub||'').toLowerCase()===srcNorm){t.sub=targetName;changed=true;}
+      });
+    }
+    if(changed)p.lastUpdated=today();
+  });
+  /* 2. Merge overrides: target keeps its scalar values; blanks fill from
+     source; roles union; noteEntries append (source onto end of target). */
+  const srcOv=companyOverrides[srcNorm]||{};
+  const tgtOv=companyOverrides[tgtNorm]||{rep:'',btCode:'',noteEntries:[]};
+  ['btCode','btType','customerStatus','address','mainPhone','rep','displayName'].forEach(function(f){
+    const tv=tgtOv[f],sv=srcOv[f];
+    if((tv==null||tv==='')&&(sv!=null&&sv!==''))tgtOv[f]=sv;
+  });
+  const tgtRoles=Array.isArray(tgtOv.roles)?tgtOv.roles.slice():[];
+  const srcRoles=Array.isArray(srcOv.roles)?srcOv.roles:[];
+  srcRoles.forEach(function(c){if(tgtRoles.indexOf(c)<0)tgtRoles.push(c);});
+  tgtOv.roles=tgtRoles;
+  /* Note entries: append source's, dedupe by id. Sorted by deriveCompanies
+     on next render. */
+  if(!Array.isArray(tgtOv.noteEntries))tgtOv.noteEntries=[];
+  const seenNoteIds=new Set(tgtOv.noteEntries.map(function(n){return n&&n.id;}));
+  (srcOv.noteEntries||[]).forEach(function(n){
+    if(!n||(n.id&&seenNoteIds.has(n.id)))return;
+    tgtOv.noteEntries.push(n);
+    if(n.id)seenNoteIds.add(n.id);
+  });
+  /* If target had no override before this, it surfaced only via project
+     linkage. We're attaching one now, so don't mark it standalone — the
+     project linkage is the real provenance. */
+  if(srcOv.standalone&&(!Array.isArray(tgtOv.noteEntries)||true)&&!tgtOv.standalone){
+    /* If target was standalone, keep it standalone; if not, keep as
+       project-derived. Either is correct — no special flag needed. */
+  }
+  companyOverrides[tgtNorm]=tgtOv;
+  /* 3. Delete the source override */
+  if(companyOverrides[srcNorm])delete companyOverrides[srcNorm];
+  persistProjects();
+  persistCompanyOverrides();
+  /* 4. Navigate to the survivor's customer detail. */
+  currentCompany=targetName;
+  if(typeof renderCompanyDetail==='function'){
+    /* Force-render — openCompanyDetail also resets tab state. */
+    try{openCompanyDetail(targetName);}catch(_){renderCompanyDetail();}
+  }
+  alert('Merged "'+sourceName+'" into "'+targetName+'". A safety snapshot was taken — you can undo this from Data & storage → Daily snapshots if needed.');
 }
 
 async function removeCurrentCompany(){
@@ -9739,8 +9929,12 @@ function renderCoDetailsSection(co){
            whether the customer is standalone (override only) or derived
            from project linkage (cascade strips them from every project). -->
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid #eee;">
+        <button class="btn btn-sm" onclick="openCustomerMergePicker()" style="margin-right:6px;">Merge into another customer…</button>
         <button class="btn btn-sm" onclick="removeCurrentCompany()" style="color:#a62929;border-color:#e6c1c1;">Remove customer</button>
-        <span style="font-size:11px;color:#888;margin-left:10px;">Deletes this customer record. ${co.projects&&co.projects.length?('Will also strip them from '+co.projects.length+' linked project'+(co.projects.length===1?'':'s')+' (architect / contractor / sub / contact fields cleared).'):'Standalone record — nothing else affected.'}</span>
+        <div style="font-size:11px;color:#888;margin-top:8px;line-height:1.5;">
+          <strong>Merge</strong> moves this customer's projects, contacts, emails, notes and reminders onto the target customer, then deletes this record. Use when a customer has been acquired or you've discovered two entries for the same company.<br>
+          <strong>Remove</strong> ${co.projects&&co.projects.length?('deletes this customer record and strips them from '+co.projects.length+' linked project'+(co.projects.length===1?'':'s')+' (architect / contractor / sub / contact fields cleared).'):'deletes this standalone record — nothing else affected.'}
+        </div>
       </div>
     </div>`;
 }
@@ -11661,7 +11855,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ai · customer-bulk-merge','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08aj · customer-record-merge','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
