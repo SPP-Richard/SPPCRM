@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ad · bt-type-list-replaced</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ae · remove-project-customer</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -5490,6 +5490,10 @@ function renderTab(){
           <button class="btn btn-sm" onclick="alert('Claude searches the register for possible duplicates of: '+${JSON.stringify(p.name)})">Check for duplicates</button>
           <button class="btn btn-sm" onclick="setProjectReminder()">Set project reminder</button>
           <button class="btn btn-sm" onclick="renameCurrentProject()">Rename project</button>
+          <!-- Phase 8v-3ae: destructive action — stripped of any colour
+               styling that would invite accidental clicks. Confirmation
+               flow handles the danger messaging. -->
+          <button class="btn btn-sm" onclick="removeCurrentProject()" style="color:#a62929;border-color:#e6c1c1;">Remove project</button>
         </div></div>
       </div>
       <div class="overview-right">
@@ -8110,7 +8114,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ad · bt-type-list-replaced'
+      build:'2026-05-08ae · remove-project-customer'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8275,7 +8279,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ad · bt-type-list-replaced';
+const BACKUP_BUILD='2026-05-08ae · remove-project-customer';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8674,6 +8678,131 @@ function saveCompanyStatus(val){
   if(!companyOverrides[norm])companyOverrides[norm]={rep:'',btCode:'',noteEntries:[]};
   companyOverrides[norm].customerStatus=String(val||'').trim();
   persistCompanyOverrides();
+}
+
+/* ========================================================================
+   Phase 8v-3ae — destructive removes (project + customer)
+   ======================================================================== */
+async function removeCurrentProject(){
+  if(!currentProject){alert('No project open.');return;}
+  const p=currentProject;
+  const emailCount=(p.emails||[]).length;
+  const contactCount=(p.contacts||[]).length;
+  const tlCount=(p.timeline||[]).length;
+  const remCount=(p.reminders||[]).length;
+  const fileCount=(p.files||[]).length;
+  const cat=p.outlookCategory||'';
+  /* Step 1: ask whether to also strip the Outlook category from every linked
+     email. Default NO so accidental deletes don't reach into Outlook. We use
+     a sequence of two native confirms — keeps the modal stack simple. */
+  let stripOutlook=false;
+  if(cat&&emailCount){
+    stripOutlook=confirm('Also strip the Outlook category "'+cat+'" from all '+emailCount+' linked email'+(emailCount===1?'':'s')+'?\n\nNon-CRM categories (like "Important") are preserved. This part is IRREVERSIBLE in Outlook — the safety snapshot can restore CRM data but not Outlook tags.\n\nClick OK to also strip the Outlook category. Click Cancel to leave Outlook untouched.');
+  }
+  /* Step 2: confirm the destructive local action with full breakdown. */
+  const summary='Remove project "'+p.name+'" ('+(p.ref||'')+')?\n\n'
+    +'This will permanently delete:\n'
+    +'  · '+emailCount+' linked email'+(emailCount===1?'':'s')+'\n'
+    +'  · '+contactCount+' contact'+(contactCount===1?'':'s')+'\n'
+    +'  · '+tlCount+' timeline entr'+(tlCount===1?'y':'ies')+'\n'
+    +'  · '+remCount+' reminder'+(remCount===1?'':'s')+'\n'
+    +'  · '+fileCount+' file'+(fileCount===1?'':'s')+'\n\n'
+    +(stripOutlook?'Outlook will also have the "'+cat+'" category stripped.\n\n':'Outlook categories stay on linked emails.\n\n')
+    +'This cannot be undone without restoring a snapshot.';
+  if(!confirm(summary))return;
+  /* Safety snapshot first */
+  try{if(typeof takeSnapshot==='function')await takeSnapshot('before-remove-project-'+(p.id||''));}catch(e){try{console.warn('Pre-remove snapshot failed',e);}catch(_){}}
+  /* Outlook strip BEFORE the local delete so the email IDs are still valid */
+  if(stripOutlook&&cat&&emailCount){
+    const updates=(p.emails||[]).filter(function(e){return e&&e.id;}).map(function(e){
+      return {id:e.id,categories:_computeUpdatedCategories(e.categories||[],'')};
+    });
+    if(updates.length){
+      try{
+        const res=await _patchMessageCategoriesBatch(updates);
+        if(res&&res.failed>0){
+          const cont=confirm('Outlook strip was partial: '+res.success+' succeeded, '+res.failed+' failed. The failed emails will still carry "'+cat+'".\n\nContinue with the project delete anyway? (Cancel to retry — your project is still intact.)');
+          if(!cont)return;
+        }
+      }catch(e){
+        alert('Outlook category strip failed — '+(e&&e.message?e.message:String(e))+'\n\nProject delete aborted so you can retry. Check Mail.ReadWrite permission in Azure.');
+        return;
+      }
+    }
+  }
+  /* Now the local delete. */
+  const idx=projects.indexOf(p);
+  if(idx>=0)projects.splice(idx,1);
+  persistProjects();
+  currentProject=null;
+  /* Navigate back to the dashboard. */
+  try{
+    const dash=document.getElementById('dashboard-screen');
+    const detail=document.getElementById('project-detail-screen');
+    if(detail)detail.classList.remove('visible');
+    if(dash)dash.style.display='';
+    if(typeof renderDashboard==='function')renderDashboard();
+  }catch(_){}
+  alert('Project "'+p.name+'" removed.');
+}
+
+async function removeCurrentCompany(){
+  if(!currentCompany){alert('No customer open.');return;}
+  const name=currentCompany;
+  const norm=name.toLowerCase();
+  const all=(typeof deriveCompanies==='function')?deriveCompanies():{};
+  const co=all[norm];
+  if(!co){alert('Customer record not found.');return;}
+  const projCount=(co.projects||[]).length;
+  const standalone=!!co.standalone;
+  /* Confirm with breakdown of cascade impact. */
+  const summary='Remove customer "'+name+'"?\n\n'
+    +(standalone&&projCount===0
+      ? 'This is a standalone customer (not on any project). Removing deletes the record entirely.'
+      : 'This customer is linked to '+projCount+' project'+(projCount===1?'':'s')+'. Removing will:\n'
+        +'  · clear them from architect / main contractor / sub-contractor fields on those projects\n'
+        +'  · delete their contact rows on those projects\n'
+        +'  · keep the projects themselves')
+    +'\n\nThis cannot be undone without restoring a snapshot.';
+  if(!confirm(summary))return;
+  /* Safety snapshot. */
+  try{if(typeof takeSnapshot==='function')await takeSnapshot('before-remove-customer-'+norm.replace(/[^a-z0-9]/g,'-').slice(0,30));}catch(e){try{console.warn('Pre-remove snapshot failed',e);}catch(_){}}
+  /* Cascade through projects: strip company from headline role fields +
+     contact rows. Only touches projects where it appears. */
+  let touched=0;
+  projects.forEach(function(p){
+    let changed=false;
+    if(p.architect&&p.architect.toLowerCase()===norm){p.architect='';changed=true;}
+    if(p.contractor&&p.contractor.toLowerCase()===norm){p.contractor='';changed=true;}
+    if(Array.isArray(p.subs)){
+      const before=p.subs.length;
+      p.subs=p.subs.filter(function(s){return (s||'').toLowerCase()!==norm;});
+      if(p.subs.length!==before)changed=true;
+    }
+    if(Array.isArray(p.contacts)){
+      const before=p.contacts.length;
+      p.contacts=p.contacts.filter(function(c){return (c.company||'').toLowerCase()!==norm;});
+      if(p.contacts.length!==before)changed=true;
+    }
+    if(changed){p.lastUpdated=today();touched++;}
+  });
+  /* Remove the override entry (covers standalone + linked alike). */
+  if(companyOverrides[norm])delete companyOverrides[norm];
+  persistProjects();
+  persistCompanyOverrides();
+  currentCompany=null;
+  /* Navigate back to the customers list. */
+  try{
+    const detail=document.getElementById('company-detail-screen');
+    const list=document.getElementById('companies-screen');
+    if(detail)detail.classList.remove('visible');
+    if(list)list.classList.add('visible');
+    if(typeof renderCompanies==='function'){
+      const sb=document.getElementById('co-search-box');
+      renderCompanies(sb?sb.value:'');
+    }
+  }catch(_){}
+  alert('Customer "'+name+'" removed'+(touched?' (cascaded through '+touched+' project'+(touched===1?'':'s')+')':'')+'.');
 }
 
 function deriveCompanies(){
@@ -9239,6 +9368,13 @@ function renderCoDetailsSection(co){
       </div>
       <!-- Phase 8v-3r: address + main phone moved into the editable fact
            cells at the top of this section. -->
+      <!-- Phase 8v-3ae: destructive remove. Cascade behaviour depends on
+           whether the customer is standalone (override only) or derived
+           from project linkage (cascade strips them from every project). -->
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid #eee;">
+        <button class="btn btn-sm" onclick="removeCurrentCompany()" style="color:#a62929;border-color:#e6c1c1;">Remove customer</button>
+        <span style="font-size:11px;color:#888;margin-left:10px;">Deletes this customer record. ${co.projects&&co.projects.length?('Will also strip them from '+co.projects.length+' linked project'+(co.projects.length===1?'':'s')+' (architect / contractor / sub / contact fields cleared).'):'Standalone record — nothing else affected.'}</span>
+      </div>
     </div>`;
 }
 
@@ -11158,7 +11294,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ad · bt-type-list-replaced','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ae · remove-project-customer','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
