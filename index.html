@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ae · remove-project-customer</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ag · remove-navigation-fix</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -841,6 +841,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="fpill" id="cofp-mc" onclick="setCompanyFilter('mc',this)">Main contractors</button>
       <button class="fpill" id="cofp-sub" onclick="setCompanyFilter('sub',this)">Sub-contractors</button>
       <button class="fpill" id="cofp-merchant" onclick="setCompanyFilter('merchant',this)">Merchant / Processor</button>
+      <!-- Phase 8v-3af: Hide-lapsed toggle. Default on so the active book
+           stays uncluttered. Click to surface Lapsed customers (they render
+           faded with a "Lapsed" badge). -->
+      <label id="cco-hide-lapsed-wrap" style="display:flex;align-items:center;gap:5px;font-size:11px;color:#555;cursor:pointer;padding:3px 8px;border:1px solid #d3dce6;border-radius:5px;background:#fafcff;margin-left:6px;user-select:none;" title="Lapsed customers are hidden from the list and to-action queue. Toggle to show them (greyed out).">
+        <input type="checkbox" id="cco-hide-lapsed-cb" onchange="setHideLapsed(this.checked)" style="margin:0;"/>
+        <span>Hide lapsed</span>
+      </label>
       <button class="btn btn-primary btn-sm" onclick="openNewCustomerModal()" style="margin-left:6px;">+ New customer</button>
     </div>
   </div>
@@ -7915,7 +7922,23 @@ function parseDateText(s){
    architect/contractor role fallback).
    ====================================================================== */
 let currentCompany=null;       // the company name currently open in detail
-let companyFilter='all';       // type filter: all|architect|mc|sub
+let companyFilter='all';       // type filter: all|architect|mc|sub|merchant
+/* Phase 8v-3af: hide Lapsed customers from the list + chase queue by default.
+   Persisted in localStorage so the toggle survives reloads. */
+let hideLapsedCustomers=true;
+try{
+  const raw=localStorage.getItem('spp.hideLapsedCustomers');
+  if(raw==='false')hideLapsedCustomers=false;
+}catch(e){}
+function setHideLapsed(v){
+  hideLapsedCustomers=!!v;
+  try{localStorage.setItem('spp.hideLapsedCustomers',hideLapsedCustomers?'true':'false');}catch(e){}
+  if(typeof renderCompanies==='function'){
+    const sb=document.getElementById('co-search-box');
+    renderCompanies(sb?sb.value:'');
+  }
+  try{_renderCompanyChaseQueue();}catch(e){}
+}
 /* Phase 8v-3o: activity filter set by the new stat cards. Orthogonal to
    companyFilter so a user can have "MC" type + "Active projects" activity. */
 let companyView='all';         // activity filter: all|active|stale
@@ -8114,7 +8137,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ae · remove-project-customer'
+      build:'2026-05-08ag · remove-navigation-fix'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8279,7 +8302,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ae · remove-project-customer';
+const BACKUP_BUILD='2026-05-08ag · remove-navigation-fix';
 function exportBackup(){
   const payload={
     _meta:{
@@ -8735,13 +8758,19 @@ async function removeCurrentProject(){
   if(idx>=0)projects.splice(idx,1);
   persistProjects();
   currentProject=null;
-  /* Navigate back to the dashboard. */
+  /* Navigate back to the Active projects dashboard. setNav handles every
+     bit of housekeeping correctly: hides project-screen (the project
+     detail), restores the dashboard with display:flex, AND calls
+     filterProjects() which rebuilds the list off the now-shrunken
+     projects[]. Earlier hand-rolled version used the wrong screen id
+     (project-detail-screen) and an empty display value, which left the
+     deleted project visible until the user navigated away. */
   try{
-    const dash=document.getElementById('dashboard-screen');
-    const detail=document.getElementById('project-detail-screen');
-    if(detail)detail.classList.remove('visible');
-    if(dash)dash.style.display='';
-    if(typeof renderDashboard==='function')renderDashboard();
+    if(typeof setNav==='function'){
+      /* Active sidebar item: find by its onclick attribute */
+      const activeNav=Array.prototype.find.call(document.querySelectorAll('.ni'),function(n){return (n.getAttribute('onclick')||'').indexOf("setNav(this,'active')")>=0;});
+      setNav(activeNav||null,'active');
+    }
   }catch(_){}
   alert('Project "'+p.name+'" removed.');
 }
@@ -8791,15 +8820,13 @@ async function removeCurrentCompany(){
   persistProjects();
   persistCompanyOverrides();
   currentCompany=null;
-  /* Navigate back to the customers list. */
+  /* Navigate back to the Customers list via setNav so every other screen
+     gets hidden cleanly, the list re-renders, and the sidebar reflects
+     the right active section. */
   try{
-    const detail=document.getElementById('company-detail-screen');
-    const list=document.getElementById('companies-screen');
-    if(detail)detail.classList.remove('visible');
-    if(list)list.classList.add('visible');
-    if(typeof renderCompanies==='function'){
-      const sb=document.getElementById('co-search-box');
-      renderCompanies(sb?sb.value:'');
+    if(typeof setNav==='function'){
+      const coNav=Array.prototype.find.call(document.querySelectorAll('.ni'),function(n){return (n.getAttribute('onclick')||'').indexOf("setNav(this,'companies')")>=0;});
+      setNav(coNav||null,'companies');
     }
   }catch(_){}
   alert('Customer "'+name+'" removed'+(touched?' (cascaded through '+touched+' project'+(touched===1?'':'s')+')':'')+'.');
@@ -8980,6 +9007,10 @@ function _companyToActionItems(){
   const all=deriveCompanies();
   Object.entries(all).forEach(function(pair){
     const key=pair[0],co=pair[1];
+    /* Phase 8v-3af: Lapsed customers always skip the chase queue — even
+       when the Hide-lapsed toggle is off (i.e. you want to *see* them but
+       not be reminded to chase them). They're paused, not active. */
+    if(_isCompanyLapsed(co))return;
     (co.noteEntries||[]).forEach(function(n){
       const rem=n.reminder;
       if(!rem||rem.done)return;
@@ -9085,14 +9116,21 @@ function setCompanyView(v,el){
   if(el){el.style.outline='2px solid #185fa5';el.style.outlineOffset='-2px';}
   renderCompanies(document.getElementById('co-search-box').value||'');
 }
+function _isCompanyLapsed(co){return co&&co.customerStatus==='Lapsed';}
 function renderCompanies(q){
   const all=deriveCompanies();
   const list=Object.values(all);
-  /* Phase 8v-3o: populate the three stat cards. Counts run across the full
-     company list, independent of the type pill filter. */
-  const cAll=list.length;
-  const cActive=list.filter(_companyHasActiveProject).length;
-  const cStale=list.filter(_isCompanyStale).length;
+  /* Sync the Hide-lapsed checkbox state on every render (handles re-rendering
+     after layout switches, etc.). */
+  const cb=document.getElementById('cco-hide-lapsed-cb');
+  if(cb)cb.checked=hideLapsedCustomers;
+  /* Phase 8v-3o + 8v-3af: stat cards reflect what's currently *visible* so
+     the All count tracks Hide-lapsed. Lapsed counts are excluded when the
+     toggle is on. */
+  const visibleForStats=hideLapsedCustomers?list.filter(function(co){return !_isCompanyLapsed(co);}):list;
+  const cAll=visibleForStats.length;
+  const cActive=visibleForStats.filter(_companyHasActiveProject).length;
+  const cStale=visibleForStats.filter(_isCompanyStale).length;
   const setStat=function(id,v){const el=document.getElementById(id);if(el)el.textContent=v;};
   setStat('cco-stat-all',cAll);
   setStat('cco-stat-active',cActive);
@@ -9109,7 +9147,9 @@ function renderCompanies(q){
     let matchView=true;
     if(companyView==='active')matchView=_companyHasActiveProject(co);
     else if(companyView==='stale')matchView=_isCompanyStale(co);
-    return matchType&&matchSearch&&matchView;
+    /* Phase 8v-3af: hide Lapsed when toggle is on. */
+    const matchLapsed=hideLapsedCustomers?!_isCompanyLapsed(co):true;
+    return matchType&&matchSearch&&matchView&&matchLapsed;
   });
   filtered.sort((a,b)=>a.name.localeCompare(b.name));
   const labels={all:'All companies',architect:'Architects',mc:'Main contractors',sub:'Sub-contractors',merchant:'Merchant / Processor'};
@@ -9126,11 +9166,15 @@ function renderCompanies(q){
     const nameArg=esc(JSON.stringify(co.name));
     const repCell=co.rep?`<div class="cco-count">${esc(co.rep)}</div>`:`<div class="cco-count" style="color:#bbb;font-style:italic;">Unassigned</div>`;
     /* Phase 8v-3af: show all roles in the card when multi-set; falls back
-       to the single legacy type for backward compat. */
+       to the single legacy type for backward compat. Lapsed rows render
+       faded with a small "Lapsed" badge next to the name. */
     const roleLbl=(Array.isArray(co.roles)&&co.roles.length)?rolesLabel(co.roles):typeLabel(co.type);
-    return `<div class="cco-card" onclick="openCompanyDetail(${nameArg})">
+    const lapsed=_isCompanyLapsed(co);
+    const cardStyle=lapsed?' style="opacity:0.55;background:#fafaf8;"':'';
+    const lapsedBadge=lapsed?' <span style="display:inline-block;font-size:9px;background:#e8e3d8;color:#7a5a14;padding:1px 6px;border-radius:3px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;margin-left:6px;vertical-align:middle;">Lapsed</span>':'';
+    return `<div class="cco-card"${cardStyle} onclick="openCompanyDetail(${nameArg})">
       <div class="ca ${cls}">${esc(init)}</div>
-      <div><div class="cco-name">${esc(co.name)}</div><div class="cco-type">${esc(roleLbl)}</div></div>
+      <div><div class="cco-name">${esc(co.name)}${lapsedBadge}</div><div class="cco-type">${esc(roleLbl)}</div></div>
       <div class="cco-count">${esc(roleLbl)}</div>
       ${repCell}
       <div><div class="cco-count">${co.contacts.length}</div><div class="cco-count-sub">${co.contacts.length===1?'contact':'contacts'}</div></div>
@@ -11294,7 +11338,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ae · remove-project-customer','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ag · remove-navigation-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
