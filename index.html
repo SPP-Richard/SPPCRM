@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08aj · customer-record-merge</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ak · project-merge-button-and-ref-aliases</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -2652,7 +2652,8 @@ function renderProjectPickerList(){
   }
   if(q){
     candidates=candidates.filter(function(p){
-      const hay=((p.name||'')+' '+(p.ref||'')+' '+(p.sppRef||'')+' '+(p.architect||'')+' '+(p.contractor||'')+' '+(p.addr||'')).toLowerCase();
+      /* Phase 8v-3ak: prevRefs[] for historical refs of merged-in projects. */
+      const hay=((p.name||'')+' '+(p.ref||'')+' '+(p.sppRef||'')+' '+((p.prevRefs||[]).join(' '))+' '+(p.architect||'')+' '+(p.contractor||'')+' '+(p.addr||'')).toLowerCase();
       return hay.indexOf(q)>=0;
     });
   }
@@ -2868,10 +2869,27 @@ function _mergeProjectInto(sourceId,targetId){
   _mergeArr(src.subs,tgt.subs,function(s){return (s&&s.name)||s;});
   _mergeArr(src.products,tgt.products,function(p){return p;});
   _mergeArr(src.projectTypes,tgt.projectTypes,function(p){return p;});
+  /* Phase 8v-3ak: preserve the source's refs as searchable on the target.
+     Captures src.ref, src.sppRef, plus anything already in src.prevRefs
+     (chains of merges remain discoverable). Deduped case-insensitively
+     against ALL existing refs on the target to avoid bloating the array. */
+  if(!Array.isArray(tgt.prevRefs))tgt.prevRefs=[];
+  const incomingRefs=[];
+  if(src.ref)incomingRefs.push(src.ref);
+  if(src.sppRef&&src.sppRef!==src.ref)incomingRefs.push(src.sppRef);
+  if(Array.isArray(src.prevRefs))src.prevRefs.forEach(function(r){if(r)incomingRefs.push(r);});
+  const seenRefs=new Set();
+  if(tgt.ref)seenRefs.add(tgt.ref.toLowerCase());
+  if(tgt.sppRef)seenRefs.add(tgt.sppRef.toLowerCase());
+  tgt.prevRefs.forEach(function(r){if(r)seenRefs.add(String(r).toLowerCase());});
+  incomingRefs.forEach(function(r){
+    const k=String(r).toLowerCase();
+    if(!seenRefs.has(k)){tgt.prevRefs.push(r);seenRefs.add(k);}
+  });
   /* Merge note: append a one-line timeline entry on the target so the
      audit trail records what happened. */
   if(!Array.isArray(tgt.timeline))tgt.timeline=[];
-  tgt.timeline.unshift({id:'merge-'+Date.now(),type:'note',date:today(),author:ME||'System',action:'merged project','text':'Merged "'+src.name+'" ('+(src.ref||'no ref')+') into this project. '+(src.emails||[]).length+' emails and '+(src.contacts||[]).length+' contacts brought across.'});
+  tgt.timeline.unshift({id:'merge-'+Date.now(),type:'note',date:today(),author:ME||'System',action:'merged project','text':'Merged "'+src.name+'" ('+(src.ref||'no ref')+') into this project. '+(src.emails||[]).length+' emails and '+(src.contacts||[]).length+' contacts brought across. Historical refs preserved on this project for search.'});
   tgt.lastUpdated=today();
   /* Remove the source project. */
   const idx=projects.findIndex(function(p){return p.id===sourceId;});
@@ -3628,15 +3646,29 @@ function _findContactMatchProjects(email){
   return matched;
 }
 function _findRefMatchProjects(email){
-  /* Returns ALL projects whose ref or sppRef appears in the subject. Refs
-     are unique by design, but list-not-singleton in case of weird overlap. */
+  /* Returns ALL projects whose ref / sppRef / prevRef appears in the
+     subject. Refs are unique by design, but list-not-singleton in case
+     of weird overlap. Phase 8v-3ak: prevRefs[] covers refs of projects
+     that were merged INTO this one, so emails referencing the historical
+     ref still auto-route to the survivor. */
   if(!email||!email.subject)return [];
   const subj=email.subject.toUpperCase();
   const matched=[];
   for(let i=0;i<projects.length;i++){
     const p=projects[i];
-    if(p.ref&&subj.indexOf(p.ref.toUpperCase())>=0)matched.push(p);
-    else if(p.sppRef&&p.sppRef.length>=4&&subj.indexOf(p.sppRef.toUpperCase())>=0)matched.push(p);
+    let hit=false;
+    if(p.ref&&subj.indexOf(p.ref.toUpperCase())>=0)hit=true;
+    else if(p.sppRef&&p.sppRef.length>=4&&subj.indexOf(p.sppRef.toUpperCase())>=0)hit=true;
+    else if(Array.isArray(p.prevRefs)){
+      /* prevRefs are by definition full project refs (SPP-YYYY-NNN style)
+         that previously existed as p.ref on a merged project, so match
+         them with the same lax rule as p.ref — no minimum length. */
+      for(let j=0;j<p.prevRefs.length;j++){
+        const pr=p.prevRefs[j];
+        if(pr&&subj.indexOf(String(pr).toUpperCase())>=0){hit=true;break;}
+      }
+    }
+    if(hit)matched.push(p);
   }
   return matched;
 }
@@ -4376,7 +4408,10 @@ projects.forEach(p=>{
    name and company (so "James Webb" and "Foster & Partners" both match
    regardless of which legacy text field they're stored on). */
 function _projectSearchFields(p){
-  const out=[p.name,p.addr,p.architect,p.contractor,p.ref,p.sppRef,p.outlookCategory,...(p.subs||[])];
+  /* Phase 8v-3ak: prevRefs[] carries the refs/sppRefs of any projects that
+     were merged INTO this one. Surfaces them in the global search bar so
+     historical references still find the surviving project. */
+  const out=[p.name,p.addr,p.architect,p.contractor,p.ref,p.sppRef,p.outlookCategory,...(p.subs||[]),...(p.prevRefs||[])];
   if(Array.isArray(p.contacts)){
     for(const c of p.contacts){
       if(c&&c.name)out.push(c.name);
@@ -5517,7 +5552,7 @@ function renderTab(){
         <div style="margin-top:16px;"><div style="${_hdr}">Products required</div>${renderProductChips(p)}</div>
         <div style="margin-top:16px;"><div style="${_hdr}">Quick actions</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          <button class="btn btn-sm" onclick="alert('Claude searches the register for possible duplicates of: '+${JSON.stringify(p.name)})">Check for duplicates</button>
+          <button class="btn btn-sm" onclick="mergeCurrentProject()" title="Merge this project into another. Everything moves across; this project's ref is preserved on the survivor so historical references still find it.">Merge projects</button>
           <button class="btn btn-sm" onclick="setProjectReminder()">Set project reminder</button>
           <button class="btn btn-sm" onclick="renameCurrentProject()">Rename project</button>
           <!-- Phase 8v-3ae: destructive action — stripped of any colour
@@ -8483,7 +8518,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08aj · customer-record-merge'
+      build:'2026-05-08ak · project-merge-button-and-ref-aliases'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8648,7 +8683,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08aj · customer-record-merge';
+const BACKUP_BUILD='2026-05-08ak · project-merge-button-and-ref-aliases';
 function exportBackup(){
   const payload={
     _meta:{
@@ -11855,7 +11890,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08aj · customer-record-merge','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ak · project-merge-button-and-ref-aliases','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
