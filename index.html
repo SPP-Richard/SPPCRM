@@ -706,7 +706,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ag · remove-navigation-fix</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ai · customer-bulk-merge</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1560,8 +1560,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="modal-box w920">
     <div class="modal-head">
       <div>
-        <div class="modal-title">Bulk import projects</div>
-        <div class="modal-sub">Upload an Excel workbook to add or top-up project records</div>
+        <div class="modal-title" id="bulk-title">Bulk import</div>
+        <div class="modal-sub" id="bulk-sub">Upload an Excel workbook to add or top-up records</div>
       </div>
       <button class="xb" onclick="hideBulkImport()">×</button>
     </div>
@@ -7372,8 +7372,19 @@ const CONTACT_TYPE_VALUES=['architect','mc','sub'];
 
 function showBulkImport(){
   if(!requireAdmin('Bulk import'))return;
-  bulkState={step:'upload',projects:[],contacts:[],fileName:'',conflicts:{}};
+  /* Phase 8v-3ah: bulkState gains a 'kind' field (projects | customers).
+     Customers import drops into companyOverrides; projects import keeps
+     the existing flow. */
+  bulkState={kind:'projects',step:'upload',projects:[],contacts:[],customers:[],fileName:'',conflicts:{}};
   document.getElementById('bulk-modal').classList.add('open');
+  renderBulkImport();
+}
+function setBulkImportKind(k){
+  if(!bulkState)return;
+  bulkState.kind=(k==='customers')?'customers':'projects';
+  bulkState.step='upload';
+  bulkState.projects=[];bulkState.contacts=[];bulkState.customers=[];
+  bulkState.fileName='';bulkState.conflicts={};
   renderBulkImport();
 }
 function hideBulkImport(){
@@ -7385,23 +7396,53 @@ function renderBulkImport(){
   const body=document.getElementById('bulk-body');
   const foot=document.getElementById('bulk-foot');
   if(!bulkState){return;}
+  /* Sync title + sub line. */
+  const titleEl=document.getElementById('bulk-title');
+  const subEl=document.getElementById('bulk-sub');
+  if(titleEl)titleEl.textContent=bulkState.kind==='customers'?'Bulk import customers':'Bulk import projects';
+  if(subEl)subEl.textContent=bulkState.kind==='customers'?'Upload an Excel workbook to add or top-up customer records (e.g. a BisTrack export)':'Upload an Excel workbook to add or top-up project records';
+  /* Tab selector — sits at the top of every step so user can switch back. */
+  const isProj=bulkState.kind==='projects';
+  const tabsHtml='<div style="display:flex;gap:6px;border-bottom:1px solid #eee;margin-bottom:14px;padding-bottom:0;">'
+    +'<button class="bulk-tab'+(isProj?' active':'')+'" onclick="setBulkImportKind(\'projects\')" style="background:none;border:none;border-bottom:2px solid '+(isProj?'#185fa5':'transparent')+';color:'+(isProj?'#185fa5':'#666')+';font-size:13px;font-weight:'+(isProj?'600':'500')+';padding:8px 14px;cursor:pointer;">Projects</button>'
+    +'<button class="bulk-tab'+(!isProj?' active':'')+'" onclick="setBulkImportKind(\'customers\')" style="background:none;border:none;border-bottom:2px solid '+(!isProj?'#185fa5':'transparent')+';color:'+(!isProj?'#185fa5':'#666')+';font-size:13px;font-weight:'+(!isProj?'600':'500')+';padding:8px 14px;cursor:pointer;">Customers</button>'
+    +'</div>';
   if(bulkState.step==='upload'){
-    body.innerHTML=`
-      <div class="imp-step">
-        <div class="imp-hd">Step 1 — Get the template</div>
-        <div style="font-size:13px;color:#555;margin-bottom:10px;">The template has two sheets: <b>Projects</b> (one row per project) and <b>Contacts</b> (one row per contact, linked to a project by SPP ref or name). You can leave the Contacts sheet blank if you prefer.</div>
-        <button class="btn btn-sm" onclick="downloadImportTemplate()"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-right:5px;vertical-align:-2px;"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Download template (.xlsx)</button>
-      </div>
-      <div class="imp-step">
-        <div class="imp-hd">Step 2 — Upload your file</div>
-        <label class="imp-dz" id="imp-dz">
-          <input type="file" id="imp-file" accept=".xlsx,.xls" onchange="handleImportFile(this.files[0])"/>
-          <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.6;"><path d="M8 11V3M5 6l3-3 3 3"/><path d="M2 12v2h12v-2"/></svg>
-          <div>Click to upload an <b>.xlsx</b> file</div>
-          <div style="font-size:11px;color:#aaa;margin-top:4px;">or drag and drop</div>
-        </label>
-      </div>
-      <div style="font-size:11px;color:#aaa;">Expected columns on <b>Projects</b> sheet: Project name · SPP ref · Address · Architect · Main contractor · Stage (spec / quoting / won / lost) · Sales rep · Expected build month · Expected build year · Follow up date · Flagged.</div>`;
+    if(isProj){
+      body.innerHTML=tabsHtml+`
+        <div class="imp-step">
+          <div class="imp-hd">Step 1 — Get the template</div>
+          <div style="font-size:13px;color:#555;margin-bottom:10px;">The template has two sheets: <b>Projects</b> (one row per project) and <b>Contacts</b> (one row per contact, linked to a project by SPP ref or name). You can leave the Contacts sheet blank if you prefer.</div>
+          <button class="btn btn-sm" onclick="downloadImportTemplate()"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-right:5px;vertical-align:-2px;"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Download projects template (.xlsx)</button>
+        </div>
+        <div class="imp-step">
+          <div class="imp-hd">Step 2 — Upload your file</div>
+          <label class="imp-dz" id="imp-dz">
+            <input type="file" id="imp-file" accept=".xlsx,.xls" onchange="handleImportFile(this.files[0])"/>
+            <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.6;"><path d="M8 11V3M5 6l3-3 3 3"/><path d="M2 12v2h12v-2"/></svg>
+            <div>Click to upload an <b>.xlsx</b> file</div>
+            <div style="font-size:11px;color:#aaa;margin-top:4px;">or drag and drop</div>
+          </label>
+        </div>
+        <div style="font-size:11px;color:#aaa;line-height:1.5;">Expected columns on <b>Projects</b> sheet: Project name · SPP ref · Project ref · Address · Architect · Main contractor · <b>Sub-contractors</b> (comma or semicolon separated) · Stage (spec / quoting / won / lost) · Sales rep · Expected build month · Expected build year · Follow up date · <b>Quote due date</b> · <b>Products</b> (comma list) · <b>Project types</b> (comma list) · Flagged.</div>`;
+    }else{
+      body.innerHTML=tabsHtml+`
+        <div class="imp-step">
+          <div class="imp-hd">Step 1 — Get the template</div>
+          <div style="font-size:13px;color:#555;margin-bottom:10px;">Single <b>Customers</b> sheet — one row per company. The parser is forgiving with column headers, so a BisTrack export usually works with minimal renaming. See the column hint below for accepted names.</div>
+          <button class="btn btn-sm" onclick="downloadCustomerImportTemplate()"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-right:5px;vertical-align:-2px;"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M2 12v2h12v-2"/></svg>Download customers template (.xlsx)</button>
+        </div>
+        <div class="imp-step">
+          <div class="imp-hd">Step 2 — Upload your file</div>
+          <label class="imp-dz" id="imp-dz">
+            <input type="file" id="imp-file" accept=".xlsx,.xls" onchange="handleImportFile(this.files[0])"/>
+            <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.6;"><path d="M8 11V3M5 6l3-3 3 3"/><path d="M2 12v2h12v-2"/></svg>
+            <div>Click to upload an <b>.xlsx</b> file</div>
+            <div style="font-size:11px;color:#aaa;margin-top:4px;">or drag and drop</div>
+          </label>
+        </div>
+        <div style="font-size:11px;color:#aaa;line-height:1.5;">Expected columns on <b>Customers</b> sheet: <b>Company name</b> (required) · BT Code (BisTrack customer code) · BT TYPE (must match a value in your BT TYPE list) · Customer Status (Prospect / Operational Cash / Operational Account / Lapsed / Not on BT) · Roles (comma-separated: Architect, Main contractor, Sub-contractor, Merchant / Processor) · Address · Main phone · Assigned rep.<br><br>BT export aliases accepted: <code>Name</code>, <code>Customer Name</code>, <code>Account Name</code> for company name; <code>Customer Code</code>, <code>Code</code>, <code>Account</code> for BT Code; <code>Type</code>, <code>Customer Type</code> for BT TYPE; <code>Status</code> for Customer Status.</div>`;
+    }
     foot.innerHTML=`<button class="btn btn-sm" onclick="hideBulkImport()">Cancel</button>`;
     /* Drag and drop */
     const dz=document.getElementById('imp-dz');
@@ -7411,13 +7452,14 @@ function renderBulkImport(){
       dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('has');if(e.dataTransfer.files[0])handleImportFile(e.dataTransfer.files[0]);});
     }
   } else if(bulkState.step==='review'){
+    if(isProj){
     const rows=bulkState.projects;
     const counts={ok:0,warn:0,dup:0,err:0};
     rows.forEach(r=>counts[r._status]++);
     const contactRows=bulkState.contacts;
     const cCounts={ok:0,warn:0,err:0};
     contactRows.forEach(r=>cCounts[r._status==='dup'?'ok':r._status]++);
-    body.innerHTML=`
+    body.innerHTML=tabsHtml+`
       <div style="font-size:11px;color:#aaa;margin-bottom:6px;">From: <b>${esc(bulkState.fileName)}</b></div>
       <div class="imp-summary">
         <div class="imp-sum-card ok"><div class="imp-sum-n">${counts.ok}</div><div class="imp-sum-l">Ready</div></div>
@@ -7427,7 +7469,7 @@ function renderBulkImport(){
       </div>
       <div class="imp-step">
         <div class="imp-hd">Projects preview (${rows.length} rows)</div>
-        ${rows.length?`<div style="overflow-x:auto;border:1px solid #eee;border-radius:8px;"><table class="pvt"><thead><tr><th>Status</th><th>Row</th><th>Project name</th><th>SPP ref</th><th>Architect</th><th>Main contractor</th><th>Stage</th><th>Rep</th><th>Notes</th></tr></thead><tbody>${rows.map((r,i)=>`<tr class="rw-${r._status==='ok'?'':r._status}"><td><span class="sp sp-${r._status}">${r._status==='ok'?'Ready':r._status==='warn'?'Warning':r._status==='dup'?'Duplicate':'Error'}</span></td><td>${r._row}</td><td>${esc(r.name||'')}</td><td>${esc(r.ref||'')}</td><td>${esc(r.architect||'')}</td><td>${esc(r.contractor||'')}</td><td>${esc(r.stage||'')}</td><td>${esc(r.salesRep||'')}</td><td style="font-size:11px;color:#777;">${esc((r._issues||[]).join('; '))}</td></tr>`).join('')}</tbody></table></div>`:'<div style="color:#aaa;font-size:12px;">No project rows found in the file.</div>'}
+        ${rows.length?`<div style="overflow-x:auto;border:1px solid #eee;border-radius:8px;"><table class="pvt"><thead><tr><th>Status</th><th>Row</th><th>Project name</th><th>SPP ref</th><th>Architect</th><th>Main contractor</th><th>Subs</th><th>Stage</th><th>Rep</th><th>Products</th><th>Types</th><th>Notes</th></tr></thead><tbody>${rows.map((r,i)=>`<tr class="rw-${r._status==='ok'?'':r._status}"><td><span class="sp sp-${r._status}">${r._status==='ok'?'Ready':r._status==='warn'?'Warning':r._status==='dup'?'Duplicate':'Error'}</span></td><td>${r._row}</td><td>${esc(r.name||'')}</td><td>${esc(r.ref||'')}</td><td>${esc(r.architect||'')}</td><td>${esc(r.contractor||'')}</td><td style="font-size:11px;">${esc((r.subs||[]).join(', '))}</td><td>${esc(r.stage||'')}</td><td>${esc(r.salesRep||'')}</td><td style="font-size:11px;">${esc((r.products||[]).join(', '))}</td><td style="font-size:11px;">${esc((r.projectTypes||[]).join(', '))}</td><td style="font-size:11px;color:#777;">${esc((r._issues||[]).join('; '))}</td></tr>`).join('')}</tbody></table></div>`:'<div style="color:#aaa;font-size:12px;">No project rows found in the file.</div>'}
       </div>
       ${rows.filter(r=>r._status==='dup').length?`<div class="imp-step"><div class="imp-hd">Duplicate handling — fill blanks, never overwrite</div>
         ${rows.filter(r=>r._status==='dup').map((r,i)=>renderDupCard(r)).join('')}
@@ -7436,12 +7478,37 @@ function renderBulkImport(){
         <div style="overflow-x:auto;border:1px solid #eee;border-radius:8px;"><table class="pvt"><thead><tr><th>Status</th><th>Name</th><th>Role</th><th>Company</th><th>Type</th><th>Email</th><th>Phone</th><th>Linked to</th><th>Notes</th></tr></thead><tbody>${contactRows.map(c=>`<tr class="rw-${c._status==='ok'||c._status==='dup'?'':c._status}"><td><span class="sp sp-${c._status==='dup'?'ok':c._status}">${c._status==='ok'?'Ready':c._status==='warn'?'Warning':c._status==='dup'?'Linked':'Error'}</span></td><td>${esc(c.name||'')}</td><td>${esc(c.role||'')}</td><td>${esc(c.company||'')}</td><td>${esc(c.type||'')}</td><td>${esc(c.email||'')}</td><td>${esc(c.phone||'')}</td><td style="font-size:11px;color:#777;">${esc(c._linkDescription||'')}</td><td style="font-size:11px;color:#777;">${esc((c._issues||[]).join('; '))}</td></tr>`).join('')}</tbody></table></div>
       </div>`:''}`;
     foot.innerHTML=`<button class="btn btn-sm" onclick="bulkState.step='upload';renderBulkImport();">Back</button><button class="btn btn-sm" onclick="hideBulkImport()">Cancel</button><button class="btn btn-primary btn-sm" onclick="commitBulkImport()">Import ${counts.ok} new · merge ${counts.dup} · skip ${counts.err}</button>`;
+    }else{
+      /* Customers review */
+      const rows=bulkState.customers;
+      const counts={ok:0,warn:0,dup:0,err:0};
+      rows.forEach(r=>counts[r._status]++);
+      body.innerHTML=tabsHtml+`
+        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">From: <b>${esc(bulkState.fileName)}</b></div>
+        <div class="imp-summary">
+          <div class="imp-sum-card ok"><div class="imp-sum-n">${counts.ok}</div><div class="imp-sum-l">Ready</div></div>
+          <div class="imp-sum-card warn"><div class="imp-sum-n">${counts.warn}</div><div class="imp-sum-l">Warnings</div></div>
+          <div class="imp-sum-card dup"><div class="imp-sum-n">${counts.dup}</div><div class="imp-sum-l">Duplicates</div></div>
+          <div class="imp-sum-card err"><div class="imp-sum-n">${counts.err}</div><div class="imp-sum-l">Errors</div></div>
+        </div>
+        <div class="imp-step">
+          <div class="imp-hd">Customers preview (${rows.length} rows)</div>
+          ${rows.length?`<div style="overflow-x:auto;border:1px solid #eee;border-radius:8px;"><table class="pvt"><thead><tr><th>Status</th><th>Row</th><th>Company name</th><th>BT Code</th><th>BT TYPE</th><th>Status</th><th>Roles</th><th>Address</th><th>Phone</th><th>Rep</th><th>Notes</th></tr></thead><tbody>${rows.map(function(r){return '<tr class="rw-'+(r._status==='ok'?'':r._status)+'"><td><span class="sp sp-'+r._status+'">'+(r._status==='ok'?'Ready':r._status==='warn'?'Warning':r._status==='dup'?'Duplicate':'Error')+'</span></td><td>'+r._row+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(r.btCode||'')+'</td><td>'+esc(r.btType||'')+'</td><td>'+esc(r.customerStatus||'')+'</td><td style="font-size:11px;">'+esc((r.roles||[]).map(function(c){return CUSTOMER_ROLE_LABELS[c]||c;}).join(', '))+'</td><td style="font-size:11px;">'+esc((r.address||'').substring(0,40))+((r.address||'').length>40?'…':'')+'</td><td style="font-size:11px;">'+esc(r.mainPhone||'')+'</td><td>'+esc(r.rep||'')+'</td><td style="font-size:11px;color:#777;">'+esc((r._issues||[]).join('; '))+'</td></tr>';}).join('')}</tbody></table></div>`:'<div style="color:#aaa;font-size:12px;">No customer rows found in the file.</div>'}
+        </div>
+        ${rows.filter(function(r){return r._status==='dup';}).length?'<div class="imp-step"><div class="imp-hd">Duplicate handling — fill blanks, never overwrite</div><div style="font-size:11px;color:#666;margin-bottom:10px;">Matched by company name (case-insensitive). Blank existing fields will be filled from the import. Conflicts (both filled, values differ) need your decision.</div>'+rows.filter(function(r){return r._status==='dup';}).map(function(r){return renderCustomerDupCard(r);}).join('')+'</div>':''}`;
+      foot.innerHTML=`<button class="btn btn-sm" onclick="bulkState.step='upload';renderBulkImport();">Back</button><button class="btn btn-sm" onclick="hideBulkImport()">Cancel</button><button class="btn btn-primary btn-sm" onclick="commitBulkImport()">Import ${counts.ok} new · merge ${counts.dup} · skip ${counts.err}</button>`;
+    }
   } else if(bulkState.step==='done'){
     const s=bulkState.summary||{};
+    const isProj2=bulkState.kind==='projects';
     body.innerHTML=`<div style="text-align:center;padding:30px 20px;">
       <svg width="48" height="48" viewBox="0 0 16 16" fill="none" stroke="#27500a" stroke-width="1.5" style="margin-bottom:12px;"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>
       <div style="font-size:16px;font-weight:500;margin-bottom:6px;">Import complete</div>
-      <div style="font-size:13px;color:#666;">${s.created||0} new project${s.created===1?'':'s'} added · ${s.merged||0} existing project${s.merged===1?'':'s'} updated · ${s.skipped||0} row${s.skipped===1?'':'s'} skipped · ${s.contactsAdded||0} contact${s.contactsAdded===1?'':'s'} linked</div>
+      <div style="font-size:13px;color:#666;">${
+        isProj2
+          ? ((s.created||0)+' new project'+(s.created===1?'':'s')+' added · '+(s.merged||0)+' existing project'+(s.merged===1?'':'s')+' updated · '+(s.skipped||0)+' row'+(s.skipped===1?'':'s')+' skipped · '+(s.contactsAdded||0)+' contact'+(s.contactsAdded===1?'':'s')+' linked')
+          : ((s.created||0)+' new customer'+(s.created===1?'':'s')+' added · '+(s.merged||0)+' existing customer'+(s.merged===1?'':'s')+' updated · '+(s.skipped||0)+' row'+(s.skipped===1?'':'s')+' skipped')
+      }</div>
     </div>`;
     foot.innerHTML=`<button class="btn btn-primary btn-sm" onclick="hideBulkImport()">Done</button>`;
   }
@@ -7449,7 +7516,7 @@ function renderBulkImport(){
 
 function renderDupCard(r){
   const existing=projects.find(p=>p.id===r._matchId); if(!existing)return '';
-  const fields=[['name','Name'],['ref','Project ref'],['sppRef','SPP ref'],['addr','Address'],['architect','Architect'],['contractor','Main contractor'],['stage','Stage'],['salesRep','Sales rep'],['followUp','Follow-up date']];
+  const fields=[['name','Name'],['ref','Project ref'],['sppRef','SPP ref'],['addr','Address'],['architect','Architect'],['contractor','Main contractor'],['stage','Stage'],['salesRep','Sales rep'],['followUp','Follow-up date'],['quoteDueDate','Quote due date']];
   const rows=fields.map(([f,lbl])=>{
     const ex=existing[f],nv=r[f];
     if(nv==null||nv==='')return ''; /* Excel blank: nothing to merge */
@@ -7471,12 +7538,69 @@ function setDupChoice(matchId,field,choice){
   bulkState.conflicts[matchId][field]=choice;
   renderBulkImport();
 }
+/* Phase 8v-3ai: customer-side dup card. Renders one diff row per
+   populated field, with Keep / Use new pickers on conflicts. Roles[]
+   shows as a union preview (always merged, no conflict). */
+function renderCustomerDupCard(r){
+  const key=r._matchKey||'';
+  const existing=(companyOverrides[key]||{});
+  const existingRoles=Array.isArray(existing.roles)?existing.roles:[];
+  const incomingRoles=Array.isArray(r.roles)?r.roles:[];
+  const unionRoles=existingRoles.slice();
+  incomingRoles.forEach(function(c){if(unionRoles.indexOf(c)<0)unionRoles.push(c);});
+  const fields=[
+    ['displayName','Display name','name'],
+    ['btCode','BT Code','btCode'],
+    ['btType','BT TYPE','btType'],
+    ['customerStatus','Customer Status','customerStatus'],
+    ['address','Address','address'],
+    ['mainPhone','Main phone','mainPhone'],
+    ['rep','Assigned rep','rep']
+  ];
+  const rows=fields.map(function(pair){
+    const exF=pair[0],lbl=pair[1],imF=pair[2];
+    const ex=existing[exF];
+    const nv=r[imF];
+    if(nv==null||nv==='')return ''; /* import blank — nothing to merge */
+    if(ex==null||ex===''){
+      return '<div class="diff-row"><div class="diff-lbl">'+esc(lbl)+'</div><div class="diff-val empty">(empty)</div><div class="diff-val fill">'+esc(String(nv))+'</div><div style="font-size:10px;color:#27500a;font-weight:500;">Will fill</div></div>';
+    }
+    if(String(ex)===String(nv))return '';
+    const choice=(bulkState.conflicts[key]||{})[imF]||'keep';
+    const escKey=esc(key).replace(/'/g,"&#39;");
+    return '<div class="diff-row"><div class="diff-lbl">'+esc(lbl)+'</div><div class="diff-val conflict">'+esc(String(ex))+'</div><div class="diff-val conflict">'+esc(String(nv))+'</div><div class="diff-choice"><button class="diff-chip'+(choice==='keep'?' active':'')+'" onclick="setCustDupChoice(\''+escKey+'\',\''+imF+'\',\'keep\')">Keep</button><button class="diff-chip'+(choice==='use'?' active':'')+'" onclick="setCustDupChoice(\''+escKey+'\',\''+imF+'\',\'use\')">Use new</button></div></div>';
+  }).filter(Boolean);
+  /* Roles row: always union-merge. Show preview only. */
+  let rolesRow='';
+  if(incomingRoles.length){
+    const addedNow=incomingRoles.filter(function(c){return existingRoles.indexOf(c)<0;});
+    if(addedNow.length){
+      const lblsAdded=addedNow.map(function(c){return CUSTOMER_ROLE_LABELS[c]||c;}).join(', ');
+      const lblsAll=unionRoles.map(function(c){return CUSTOMER_ROLE_LABELS[c]||c;}).join(', ');
+      rolesRow='<div class="diff-row"><div class="diff-lbl">Roles</div><div class="diff-val">'+esc(existingRoles.map(function(c){return CUSTOMER_ROLE_LABELS[c]||c;}).join(', ')||'(none)')+'</div><div class="diff-val fill">'+esc(lblsAll)+'</div><div style="font-size:10px;color:#27500a;font-weight:500;">Will add '+esc(lblsAdded)+'</div></div>';
+    }
+  }
+  const content=rows.concat(rolesRow?[rolesRow]:[]);
+  return '<div class="dup-card">'
+    +'<div class="dup-hd">'+esc(r.name||'Unnamed')+' <span style="font-size:11px;color:#888;font-weight:400;">· matches existing '+esc(r._matchType==='override'?'customer record':'project-linked customer')+'</span></div>'
+    +'<div class="dup-sub">Fields below will be filled where empty. Conflicts (both filled, values differ) need your decision. Roles always merge — additions only, never removals.</div>'
+    +(content.length?content.join(''):'<div style="font-size:12px;color:#aaa;">No changes — import data matches existing record.</div>')
+    +'</div>';
+}
+function setCustDupChoice(matchKey,field,choice){
+  if(!bulkState.conflicts[matchKey])bulkState.conflicts[matchKey]={};
+  bulkState.conflicts[matchKey][field]=choice;
+  renderBulkImport();
+}
 
 function downloadImportTemplate(){
   if(typeof XLSX==='undefined'){alert('The Excel library failed to load (offline?). Reload this page while online to enable Bulk import.');return;}
+  /* Phase 8v-3ah: extended template — adds Sub-contractors, Products,
+     Project types, Quote due date columns so a single import covers
+     everything in the project schema. */
   const projectsSheet=XLSX.utils.aoa_to_sheet([
-    ['Project name','SPP ref','Project ref','Address','Architect','Main contractor','Stage','Sales rep','Expected build month','Expected build year','Follow up date','Flagged'],
-    ['Example Warehouse Fitout','','SPP-2026-100','24 Canal St, Manchester','BDP','Kier','quoting','Richard Claridge',9,2026,'2026-05-15','no']
+    ['Project name','SPP ref','Project ref','Address','Architect','Main contractor','Sub-contractors','Stage','Sales rep','Expected build month','Expected build year','Follow up date','Quote due date','Products','Project types','Flagged'],
+    ['Example Warehouse Fitout','','SPP-2026-100','24 Canal St, Manchester','BDP','Kier','Joe\'s Joinery; Ace Shopfit','quoting','Richard Claridge',9,2026,'2026-05-15','2026-05-20','Birch; FR Plywood','Commercial; Education Sector','no']
   ]);
   const contactsSheet=XLSX.utils.aoa_to_sheet([
     ['Project ref','Project name','Name','Role','Company','Type (architect/mc/sub)','Email','Phone'],
@@ -7486,6 +7610,19 @@ function downloadImportTemplate(){
   XLSX.utils.book_append_sheet(wb,projectsSheet,'Projects');
   XLSX.utils.book_append_sheet(wb,contactsSheet,'Contacts');
   XLSX.writeFile(wb,'SPP-import-template.xlsx');
+}
+/* Phase 8v-3ah: customer import template. Single sheet, forgiving headers
+   for BisTrack exports. */
+function downloadCustomerImportTemplate(){
+  if(typeof XLSX==='undefined'){alert('The Excel library failed to load (offline?). Reload this page while online to enable Bulk import.');return;}
+  const sheet=XLSX.utils.aoa_to_sheet([
+    ['Company name','BT Code','BT TYPE','Customer Status','Roles','Address','Main phone','Assigned rep'],
+    ['Classic Builders Ltd','C01284','Main Contractor','Operational Account','Main contractor; Sub-contractor','Unit 12 Park Rd, Manchester','0161 555 1234','Richard Claridge'],
+    ['Foster + Partners','','Architect / Designer / Specifier','Prospect','Architect','Riverside, 22 Hester Rd, London','020 7738 0455','Richard Claridge']
+  ]);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,sheet,'Customers');
+  XLSX.writeFile(wb,'SPP-customer-import-template.xlsx');
 }
 
 function handleImportFile(file){
@@ -7509,6 +7646,12 @@ function handleImportFile(file){
 function normaliseName(s){return (s||'').toLowerCase().replace(/\bapartments?\b/g,'apts').replace(/\bextension\b/g,'ext').replace(/[^a-z0-9]/g,'');}
 
 function parseImportWorkbook(wb){
+  /* Phase 8v-3ah: branch on bulkState.kind. Customers parse from a single
+     Customers sheet, drop directly into companyOverrides on commit. */
+  if(bulkState&&bulkState.kind==='customers'){
+    parseCustomerImportWorkbook(wb);
+    return;
+  }
   const projRows=[],contactRows=[];
   /* Projects sheet */
   const pSheetName=wb.SheetNames.find(n=>/project/i.test(n))||wb.SheetNames[0];
@@ -7521,6 +7664,12 @@ function parseImportWorkbook(wb){
     row.addr=(r['Address']||'').toString().trim();
     row.architect=(r['Architect']||'').toString().trim();
     row.contractor=(r['Main contractor']||r['Contractor']||'').toString().trim();
+    /* Phase 8v-3ah: subs / products / project types accept comma OR
+       semicolon separated values for ease of paste-from-Excel. */
+    const splitList=function(v){return (v||'').toString().split(/[;,]/).map(function(s){return s.trim();}).filter(Boolean);};
+    row.subs=splitList(r['Sub-contractors']||r['Subs']||r['Subcontractors']);
+    row.products=splitList(r['Products']||r['Products required']);
+    row.projectTypes=splitList(r['Project types']||r['Project type']||r['Type']);
     const rawStage=(r['Stage']||'').toString().trim().toLowerCase();
     if(rawStage&&!STAGE_VALUES.includes(rawStage)){row._status='warn';row._issues.push(`Unknown stage "${rawStage}", expected one of: ${STAGE_VALUES.join(', ')}`);row.stage='';}
     else row.stage=rawStage;
@@ -7529,6 +7678,7 @@ function parseImportWorkbook(wb){
     const mM=r['Expected build month']; row.expectedBuildMonth=mM===''||mM==null?null:(isNaN(+mM)?null:+mM);
     const yY=r['Expected build year']; row.expectedBuildYear=yY===''||yY==null?null:(isNaN(+yY)?null:+yY);
     row.followUp=formatDateValue(r['Follow up date']);
+    row.quoteDueDate=formatDateValue(r['Quote due date']||r['Quote due']);
     row.flagged=/^(yes|y|true|1)$/i.test((r['Flagged']||'').toString().trim());
     /* Required field check */
     if(!row.name){row._status='err';row._issues.push('Missing project name');}
@@ -7576,6 +7726,81 @@ function parseImportWorkbook(wb){
   bulkState.contacts=contactRows;
 }
 
+/* Phase 8v-3ah: customer-import workbook parser. Reads the Customers
+   sheet, normalises BT taxonomy values, role labels, and customer status
+   to the canonical internal codes/strings. Marks duplicates by name. */
+function parseCustomerImportWorkbook(wb){
+  const rows=[];
+  /* Accept any sheet whose name looks like customers/companies/accounts,
+     fall back to the first sheet so a raw BT export "Sheet1" still works. */
+  const sheetName=wb.SheetNames.find(function(n){return /customer|company|companies|account/i.test(n);})||wb.SheetNames[0];
+  const raw=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:''});
+  const btOpts=_getBtTypeOptions();
+  const btOptLowerMap={};btOpts.forEach(function(v){btOptLowerMap[v.toLowerCase()]=v;});
+  const statusLowerMap={};CUSTOMER_STATUS_OPTIONS.forEach(function(v){statusLowerMap[v.toLowerCase()]=v;});
+  /* Role label → internal code dictionary (case-insensitive). */
+  const roleAliasMap={
+    'architect':'architect','designer':'architect','specifier':'architect',
+    'main contractor':'mc','main-contractor':'mc','maincontractor':'mc','mc':'mc','contractor':'mc',
+    'sub-contractor':'sub','sub contractor':'sub','subcontractor':'sub','sub':'sub',
+    'merchant':'merchant','merchant / processor':'merchant','processor':'merchant'
+  };
+  raw.forEach(function(r,i){
+    const row={_row:i+2,_status:'ok',_issues:[]};
+    /* Forgiving company-name header matching for BT exports. */
+    row.name=(r['Company name']||r['Customer name']||r['Account name']||r['Name']||r['Customer']||'').toString().trim();
+    row.btCode=(r['BT Code']||r['Customer Code']||r['Code']||r['Account']||r['BT code']||'').toString().trim();
+    /* BT TYPE: validate against current BT TYPE options. */
+    const rawBt=(r['BT TYPE']||r['BT Type']||r['Customer Type']||r['Type']||'').toString().trim();
+    if(rawBt){
+      const hit=btOptLowerMap[rawBt.toLowerCase()];
+      if(hit){row.btType=hit;}
+      else{row.btType=rawBt;row._status='warn';row._issues.push('BT TYPE "'+rawBt+'" not in your BT TYPE list — value still saved, add it via Customers → edit list if you want it in the dropdown');}
+    }else{row.btType='';}
+    /* Customer Status: validate against the fixed 5-value list. */
+    const rawStatus=(r['Customer Status']||r['Status']||'').toString().trim();
+    if(rawStatus){
+      const hit=statusLowerMap[rawStatus.toLowerCase()];
+      if(hit){row.customerStatus=hit;}
+      else{row.customerStatus='';row._status=row._status==='err'?'err':'warn';row._issues.push('Unknown Customer Status "'+rawStatus+'" — must be one of: '+CUSTOMER_STATUS_OPTIONS.join(', ')+'. Saved blank.');}
+    }else{row.customerStatus='';}
+    /* Roles: comma OR semicolon list of labels mapped to internal codes. */
+    const rawRoles=(r['Roles']||r['Role']||'').toString().split(/[;,]/).map(function(s){return s.trim();}).filter(Boolean);
+    row.roles=[];
+    rawRoles.forEach(function(v){
+      const code=roleAliasMap[v.toLowerCase()];
+      if(code){if(row.roles.indexOf(code)<0)row.roles.push(code);}
+      else{row._status=row._status==='err'?'err':'warn';row._issues.push('Unknown role "'+v+'" — saved without it');}
+    });
+    row.address=(r['Address']||'').toString().trim();
+    row.mainPhone=(r['Main phone']||r['Phone']||r['Telephone']||'').toString().trim();
+    row.rep=(r['Assigned rep']||r['Sales rep']||r['Rep']||'').toString().trim();
+    if(row.rep&&!salesReps.find(function(s){return s.name===row.rep;})){row._status=row._status==='err'?'err':'warn';row._issues.push('Unknown sales rep "'+row.rep+'"');}
+    /* Required-field check */
+    if(!row.name){row._status='err';row._issues.push('Missing company name');}
+    /* Duplicate detection by normalised name. Stash the match key + type
+       so the commit can merge per-field choices rather than skipping. */
+    if(row._status!=='err'){
+      const norm=row.name.toLowerCase();
+      const existsAsOverride=!!companyOverrides[norm];
+      const existsInProjects=projects.some(function(p){
+        if((p.architect||'').toLowerCase()===norm)return true;
+        if((p.contractor||'').toLowerCase()===norm)return true;
+        if((p.subs||[]).some(function(s){return (s||'').toLowerCase()===norm;}))return true;
+        if((p.contacts||[]).some(function(c){return (c.company||'').toLowerCase()===norm;}))return true;
+        return false;
+      });
+      if(existsAsOverride||existsInProjects){
+        row._status='dup';
+        row._matchKey=norm;
+        row._matchType=existsAsOverride?'override':'derived';
+        row._issues.push('Already exists — '+(existsAsOverride?'standalone customer':'linked via project'));
+      }
+    }
+    rows.push(row);
+  });
+  bulkState.customers=rows;
+}
 function findDuplicate(row){
   if(row.ref){const byRef=projects.find(p=>p.ref===row.ref||p.sppRef===row.ref); if(byRef)return byRef;}
   if(row.sppRef){const bySpp=projects.find(p=>p.sppRef===row.sppRef||p.ref===row.sppRef); if(bySpp)return bySpp;}
@@ -7598,6 +7823,11 @@ function formatDateValue(v){
 }
 
 function commitBulkImport(){
+  /* Phase 8v-3ah: branch on bulkState.kind. */
+  if(bulkState&&bulkState.kind==='customers'){
+    commitCustomerBulkImport();
+    return;
+  }
   let created=0,merged=0,skipped=0,contactsAdded=0;
   const refToProject={}; /* For newly created rows, so contacts can link */
   /* Projects */
@@ -7607,11 +7837,21 @@ function commitBulkImport(){
       const existing=projects.find(p=>p.id===r._matchId);
       if(!existing){skipped++;return;}
       const choices=bulkState.conflicts[r._matchId]||{};
-      ['name','ref','sppRef','addr','architect','contractor','stage','salesRep','followUp','expectedBuildMonth','expectedBuildYear'].forEach(f=>{
+      /* Phase 8v-3ah: extended field list includes the new schema additions. */
+      ['name','ref','sppRef','addr','architect','contractor','stage','salesRep','followUp','quoteDueDate','expectedBuildMonth','expectedBuildYear'].forEach(f=>{
         const nv=r[f],ex=existing[f];
         if(nv==null||nv==='')return;
         if(ex==null||ex==='')existing[f]=nv;
         else if(String(ex)!==String(nv)&&choices[f]==='use')existing[f]=nv;
+      });
+      /* Array fields (subs / products / projectTypes): union, dedupe
+         case-insensitively. Never overwrite — merge always grows. */
+      ['subs','products','projectTypes'].forEach(function(f){
+        const incoming=Array.isArray(r[f])?r[f]:[];
+        if(!incoming.length)return;
+        if(!Array.isArray(existing[f]))existing[f]=[];
+        const seen=new Set(existing[f].map(function(v){return String(v).toLowerCase();}));
+        incoming.forEach(function(v){if(!seen.has(String(v).toLowerCase())){existing[f].push(v);seen.add(String(v).toLowerCase());}});
       });
       existing.lastUpdated=today();
       merged++;
@@ -7623,9 +7863,11 @@ function commitBulkImport(){
         architect:r.architect||'',contractor:r.contractor||'',
         stage:r.stage||'spec',salesRep:r.salesRep||'Unassigned',
         flagged:!!r.flagged,followUp:r.followUp||'',
+        quoteDueDate:r.quoteDueDate||'',
         lastUpdated:today(),
         expectedBuildMonth:r.expectedBuildMonth,expectedBuildYear:r.expectedBuildYear,
-        subs:[],contacts:[],emails:[],files:[],timeline:[],reminders:[]
+        subs:(r.subs||[]).slice(),contacts:[],emails:[],files:[],timeline:[],reminders:[],
+        products:(r.products||[]).slice(),projectTypes:(r.projectTypes||[]).slice()
       };
       projects.push(newP);
       refToProject[r.ref||r.sppRef||r.name]=newP;
@@ -7650,7 +7892,88 @@ function commitBulkImport(){
   bulkState.step='done';
   persistProjects();
   renderBulkImport();
-  filterProjects(document.getElementById('mini-search').value||'');
+  /* mini-search may not exist depending on the active screen, fall back
+     to an empty query rather than throwing. */
+  try{filterProjects((document.getElementById('mini-search')||{}).value||'');}catch(_){}
+}
+/* Phase 8v-3ah + 8v-3ai: customer bulk import commit. New rows become
+   standalone customers in companyOverrides. Duplicates merge: blank
+   existing fields are filled, conflicts honour the Keep/Use new picker,
+   roles union-merge. Whether an entry is marked `standalone:true` depends
+   on its provenance — already-standalone records stay so; project-derived
+   records get a non-standalone override that supplements project data. */
+function commitCustomerBulkImport(){
+  let created=0,merged=0,skipped=0;
+  (bulkState.customers||[]).forEach(function(r){
+    if(r._status==='err'){skipped++;return;}
+    const norm=(r.name||'').toLowerCase();
+    if(!norm){skipped++;return;}
+    if(r._status==='dup'){
+      /* MERGE path. Always read/write companyOverrides[norm]; for a
+         project-derived match we'll initialise the override here. */
+      const existing=companyOverrides[norm]||{rep:'',btCode:'',noteEntries:[]};
+      const choices=bulkState.conflicts[norm]||{};
+      /* Scalar field merge — blank existing always fills; conflicts use
+         the picker (default Keep). Note import field names sometimes
+         differ from override field names (r.name → existing.displayName). */
+      const pairs=[
+        ['name','displayName'],
+        ['btCode','btCode'],
+        ['btType','btType'],
+        ['customerStatus','customerStatus'],
+        ['address','address'],
+        ['mainPhone','mainPhone'],
+        ['rep','rep']
+      ];
+      pairs.forEach(function(p){
+        const imF=p[0],exF=p[1];
+        const nv=r[imF];
+        if(nv==null||nv==='')return;
+        const ex=existing[exF];
+        if(ex==null||ex===''){existing[exF]=nv;return;}
+        if(String(ex)===String(nv))return;
+        if(choices[imF]==='use')existing[exF]=nv;
+      });
+      /* Roles: union-merge (always grows, never shrinks). */
+      const incomingRoles=Array.isArray(r.roles)?r.roles:[];
+      if(incomingRoles.length){
+        if(!Array.isArray(existing.roles))existing.roles=[];
+        const seen=new Set(existing.roles);
+        incomingRoles.forEach(function(c){if(!seen.has(c)){existing.roles.push(c);seen.add(c);}});
+      }
+      /* noteEntries: never touched by import. */
+      if(!Array.isArray(existing.noteEntries))existing.noteEntries=[];
+      /* Preserve standalone flag if already true; otherwise leave undefined
+         (the customer surfaces via project linkage + this override now
+         supplements it). */
+      companyOverrides[norm]=existing;
+      merged++;
+    }else{
+      companyOverrides[norm]={
+        standalone:true,
+        displayName:r.name,
+        rep:r.rep||'',
+        btCode:r.btCode||'',
+        btType:r.btType||'',
+        customerStatus:r.customerStatus||'',
+        roles:(r.roles||[]).slice(),
+        address:r.address||'',
+        mainPhone:r.mainPhone||'',
+        noteEntries:[]
+      };
+      created++;
+    }
+  });
+  bulkState.summary={created,merged,skipped};
+  bulkState.step='done';
+  persistCompanyOverrides();
+  renderBulkImport();
+  try{
+    if(typeof renderCompanies==='function'){
+      const sb=document.getElementById('co-search-box');
+      renderCompanies(sb?sb.value:'');
+    }
+  }catch(_){}
 }
 
 /* =========================================================================
@@ -8137,7 +8460,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ag · remove-navigation-fix'
+      build:'2026-05-08ai · customer-bulk-merge'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -8302,7 +8625,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ag · remove-navigation-fix';
+const BACKUP_BUILD='2026-05-08ai · customer-bulk-merge';
 function exportBackup(){
   const payload={
     _meta:{
@@ -11338,7 +11661,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ag · remove-navigation-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ai · customer-bulk-merge','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
