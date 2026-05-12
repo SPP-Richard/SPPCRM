@@ -709,7 +709,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-12 · soft live</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-12 · soft live · scan-overrides-and-banner-fix</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -2319,12 +2319,24 @@ function _renderRealScanRow(c){
   const rowBorder=sel?'#0c447c':'#e6e6e0';
   let actionsHtml='';
   if(c.projectId){
-    actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>';
+    /* Phase 8v-3aq: when the classifier guesses a project (Tier 1-4 auto
+       decisions), the user needs the option to override — either point
+       at a DIFFERENT existing project, or split the email out into a
+       brand-new one. Without these the only way out was Skip, which
+       loses the email. Confirm still accepts the suggestion; the other
+       two buttons rebind it. */
+    actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanApply('+idJson+')">Confirm</button>'
+      +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')" title="Re-route this email to a different existing project — search picker opens">Link to different project</button>'
+      +' <button class="btn btn-sm" onclick="_realScanCreateNew('+idJson+')" title="Treat this email as a brand-new project instead of the one suggested">Create new project</button>';
   }else if(c.candidates&&c.candidates.length){
     actionsHtml='<select id="real-scan-link-'+esc(e.id)+'" style="font-size:12px;padding:4px;border:1px solid #d3dce6;border-radius:4px;">'
       +c.candidates.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('')
       +'</select>'
-      +' <button class="btn btn-sm btn-primary" onclick="_realScanLinkSelected('+idJson+')">Link</button>';
+      +' <button class="btn btn-sm btn-primary" onclick="_realScanLinkSelected('+idJson+')">Link</button>'
+      /* Phase 8v-3aq: also expose Link-to-different (via picker) and
+         Create-new in case none of the suggested candidates are right. */
+      +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')" title="Pick a different project not in the suggestion list">Other project…</button>'
+      +' <button class="btn btn-sm" onclick="_realScanCreateNew('+idJson+')" title="None of the candidates fit — create a new project">Create new project</button>';
   }else{
     actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
       +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
@@ -5068,9 +5080,23 @@ loadRealScanState();
    skipped/etc.). 0 means the review is fully cleared. */
 function _outstandingScanCount(){
   if(!realScanState||realScanState.phase!=='review')return 0;
-  const total=(realScanState.classified||[]).length;
-  const decided=realScanState.decisions?realScanState.decisions.size:0;
-  return Math.max(0,total-decided);
+  /* Phase 8v-3aq: only count rows that actually need user action. The
+     classifier auto-decides "ignore" (noreply / internal-only / ignore-
+     list match) and "already-imported" rows — those never appear in the
+     review UI as actionable, so they shouldn't keep the yellow banner up.
+     Before this fix, the banner stayed visible until the user had
+     manually skipped every ignored row, which was impossible because the
+     UI doesn't surface them. */
+  const classified=realScanState.classified||[];
+  let outstanding=0;
+  for(let i=0;i<classified.length;i++){
+    const c=classified[i];
+    if(!c)continue;
+    if(c.decision==='ignore'||c.decision==='already-imported')continue;
+    if(realScanState.decisions&&realScanState.decisions.has(c.email.id))continue;
+    outstanding++;
+  }
+  return outstanding;
 }
 function renderOutstandingScanBanner(){
   const banner=document.getElementById('outstanding-scan-banner');
@@ -9137,7 +9163,7 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-12 · soft live'
+      build:'2026-05-12 · soft live · scan-overrides-and-banner-fix'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
@@ -9354,7 +9380,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-12 · soft live';
+const BACKUP_BUILD='2026-05-12 · soft live · scan-overrides-and-banner-fix';
 function exportBackup(){
   const payload={
     _meta:{
@@ -12603,7 +12629,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-12 · soft live','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-12 · soft live · scan-overrides-and-banner-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
