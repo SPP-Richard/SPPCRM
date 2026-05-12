@@ -709,7 +709,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-08ao · customer-reminder-category-tag</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-08ap · customer-reminder-popup-and-live-sync</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -7233,6 +7233,12 @@ let pendingReminderPushToCalendar=false;
 /* Phase 8v-3a: project-level reminders use this to push a calendar event
    linked to the project page (not a specific email). */
 let pendingReminderProjectId=null;
+/* Phase 8v-3ap: when the reminder modal is opened for a customer record
+   (not a project), this carries the customer display name. saveReminder
+   branches on this to write into companyOverrides[name].noteEntries[]
+   instead of currentProject.reminders[]. Cleared on hide. */
+let pendingReminderTargetCustomer=null;
+let pendingReminderTargetCustomerNoteId=null;  /* for edit mode */
 function showReminderModal(rid,prefillText,prefillCompany){
   editingRemId=rid; remModalDone=false;
   pendingReminderCompany=prefillCompany||null;
@@ -7255,7 +7261,126 @@ function showReminderModal(rid,prefillText,prefillCompany){
   document.getElementById('reminder-modal').classList.add('open');
 }
 
-function hideReminderModal(){document.getElementById('reminder-modal').classList.remove('open');}
+function hideReminderModal(){
+  document.getElementById('reminder-modal').classList.remove('open');
+  /* Phase 8v-3ap: clear customer-target so the next open defaults to
+     project mode unless explicitly set. */
+  pendingReminderTargetCustomer=null;
+  pendingReminderTargetCustomerNoteId=null;
+}
+
+/* Phase 8v-3ap: customer-reminder modal opener. Reuses the same reminder
+   modal HTML the project flow uses — same fields (text, date, notes,
+   done checkbox), same save flow, just targets companyOverrides instead
+   of currentProject.reminders. */
+/* Phase 8v-3ap: save handler for customer-target reminders. Mirrors
+   what saveReminder does for projects: validates, weekend-shifts the
+   date, writes to companyOverrides[name].noteEntries[], pushes a fresh
+   Outlook calendar event (10:00 weekday slot, SPP-Customer-Reminder
+   category). In edit mode, updates an existing note in place; in create
+   mode, prepends a new one. */
+function _saveCustomerReminderFromModal(text,date,notes){
+  const customerName=pendingReminderTargetCustomer;
+  if(!customerName){hideReminderModal();return;}
+  if(!text){alert('Reminder text is required.');return;}
+  if(!date){alert('Reminder date is required.');return;}
+  date=_shiftIsoToNextWeekday(date);
+  const norm=customerName.toLowerCase();
+  if(!companyOverrides[norm])companyOverrides[norm]={rep:'',btCode:'',noteEntries:[]};
+  const ov=companyOverrides[norm];
+  if(!Array.isArray(ov.noteEntries))ov.noteEntries=[];
+  const editId=pendingReminderTargetCustomerNoteId;
+  if(editId){
+    const n=ov.noteEntries.find(function(x){return x.id===editId;});
+    if(n){
+      const wasDone=!!(n.reminder&&n.reminder.done);
+      n.text=notes;
+      n.reminder=Object.assign({},n.reminder||{},{text:text,date:date,done:remModalDone});
+      /* If completion flipped + we have a calendar event, PATCH it. */
+      if(n.reminder.calendarEventId&&wasDone!==remModalDone){
+        const subj=n.reminder.calendarEventSubject||('Reminder: '+text);
+        _updateOutlookEventCompletion(n.reminder.calendarEventId,remModalDone,subj)
+          .catch(function(err){try{console.warn('[Phase 8v-3ap] customer reminder edit — calendar PATCH failed',err);}catch(_){}});
+      }
+      persistCompanyOverrides();
+    }
+  }else{
+    /* New customer reminder: same shape addCompanyTimelineEntry produces. */
+    const newNote={
+      id:(typeof nextCompanyNoteId==='function')?nextCompanyNoteId():('cn-'+Date.now()),
+      type:'note',
+      date:today(),
+      author:ME||'You',
+      text:notes,
+      reminder:{text:text,date:date,done:remModalDone}
+    };
+    ov.noteEntries.unshift(newNote);
+    persistCompanyOverrides();
+    /* Push Outlook calendar event, mark dirty so live-sync flushes. */
+    if(!remModalDone){
+      setTimeout(function(){
+        try{
+          const dueIso=_reminderDueIsoAt10am(date);
+          _createCompanyReminderEvent(customerName,newNote.reminder,dueIso,{note:notes}).then(function(evt){
+            if(!evt)return;
+            const fresh=(ov.noteEntries||[]).find(function(x){return x.id===newNote.id;});
+            if(fresh&&fresh.reminder){
+              fresh.reminder.calendarEventId=evt.id;
+              fresh.reminder.calendarEventWebLink=evt.webLink||'';
+              fresh.reminder.calendarEventSubject=evt.subject||'';
+              try{persistCompanyOverrides();}catch(_){}
+            }
+          }).catch(function(err){try{console.warn('[Phase 8v-3ap] customer reminder push failed',err);}catch(_){}});
+        }catch(_){}
+      },10);
+    }
+  }
+  hideReminderModal();
+  /* Refresh wherever the customer is currently visible. */
+  try{if(typeof renderCompanyTab==='function'&&currentCompany&&currentCompany.toLowerCase()===norm)renderCompanyTab();}catch(_){}
+  try{if(typeof _renderCompanyChaseQueue==='function')_renderCompanyChaseQueue();}catch(_){}
+  try{if(typeof renderCompanies==='function'){const sb=document.getElementById('co-search-box');renderCompanies(sb?sb.value:'');}}catch(_){}
+}
+
+function showCustomerReminderModal(customerName,editNoteId){
+  if(!customerName){alert('No customer open.');return;}
+  pendingReminderTargetCustomer=customerName;
+  pendingReminderTargetCustomerNoteId=editNoteId||null;
+  editingRemId=null;
+  remModalDone=false;
+  pendingReminderCompany=null;
+  pendingReminderEmailId=null;
+  pendingReminderPushToCalendar=false;
+  pendingReminderProjectId=null;
+  const titleEl=document.getElementById('rem-modal-title');
+  if(titleEl)titleEl.textContent=(editNoteId?'Edit reminder for ':'Set reminder for ')+customerName;
+  /* Pre-fill from existing note in edit mode. */
+  let prefText='',prefDate='',prefNotes='';
+  if(editNoteId){
+    const ov=companyOverrides[(customerName||'').toLowerCase()];
+    const n=ov&&(ov.noteEntries||[]).find(function(x){return x.id===editNoteId;});
+    if(n&&n.reminder){
+      prefText=n.reminder.text||'';
+      prefDate=n.reminder.date||'';
+      prefNotes=n.text||'';
+      remModalDone=!!n.reminder.done;
+    }
+  }
+  const tEl=document.getElementById('rem-text');if(tEl)tEl.value=prefText;
+  const dEl=document.getElementById('rem-date');if(dEl)dEl.value=prefDate;
+  const nEl=document.getElementById('rem-notes');if(nEl)nEl.value=prefNotes;
+  const fc=document.getElementById('rem-check');
+  if(fc){fc.classList.toggle('on',remModalDone);fc.innerHTML=remModalDone?'<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':'';}
+  /* Default date: tomorrow if creating fresh. */
+  if(!editNoteId&&!prefDate){
+    const t=new Date();t.setDate(t.getDate()+1);
+    setTimeout(function(){
+      const dEl2=document.getElementById('rem-date');
+      if(dEl2&&!dEl2.value)dEl2.value=t.toISOString().slice(0,10);
+    },20);
+  }
+  document.getElementById('reminder-modal').classList.add('open');
+}
 
 function toggleRemCheck(){
   remModalDone=!remModalDone;
@@ -7267,6 +7392,13 @@ function saveReminder(){
   const text=document.getElementById('rem-text').value.trim();
   let date=document.getElementById('rem-date').value;
   const notes=document.getElementById('rem-notes').value.trim();
+  /* Phase 8v-3ap: branch — if the modal was opened for a customer (not a
+     project), write to companyOverrides[name].noteEntries[] instead of
+     currentProject.reminders[]. */
+  if(pendingReminderTargetCustomer){
+    _saveCustomerReminderFromModal(text,date,notes);
+    return;
+  }
   if(!currentProject)return;
   /* Phase 8v-3am: weekend-shift the stored date — every reminder lands on
      a working day. The 10:00 time-of-day is applied below for the calendar
@@ -8341,9 +8473,21 @@ function commitBulkImport(){
       merged++;
       refToProject[r.ref||r.sppRef||r.name]=existing;
     } else {
+      /* Phase 8v-3ap: auto-generate ref + outlookCategory when blank.
+         Matches the SPP-YYYY-NNN sequencing that + New project uses. */
+      const newId=(projects.length?Math.max(...projects.map(p=>p.id)):0)+1;
+      let autoRef=r.ref||'';
+      let autoCat='';
+      const yr=new Date().getFullYear();
+      if(!autoRef){
+        const seq=projects.length?Math.max.apply(null,projects.map(function(p){return parseInt(((p.ref||'').match(/(\d+)$/)||[0,0])[1],10)||0;}))+1:1;
+        autoRef='SPP-'+yr+'-'+String(seq).padStart(3,'0');
+        autoCat=(typeof _generateOutlookCategoryRef==='function')?_generateOutlookCategoryRef(seq,yr):('SPP-CRM-'+yr+'-'+String(seq).padStart(3,'0'));
+      }
       const newP={
-        id: (projects.length?Math.max(...projects.map(p=>p.id)):0)+1,
-        ref:r.ref||'',sppRef:r.sppRef||'',name:r.name,addr:r.addr||'',
+        id: newId,
+        ref:autoRef,sppRef:r.sppRef||'',name:r.name,addr:r.addr||'',
+        outlookCategory:autoCat,
         architect:r.architect||'',contractor:r.contractor||'',
         stage:r.stage||'spec',salesRep:r.salesRep||'Unassigned',
         flagged:!!r.flagged,followUp:r.followUp||'',
@@ -8788,6 +8932,25 @@ function persistCompanyOverrides(){try{localStorage.setItem(COMPANY_OVERRIDES_KE
    visibility change. Cheap to call repeatedly. */
 function persistAll(){persistProjects();persistSalesReps();persistCompanyOverrides();persistUserTags();persistUserProjectTypes();persistScanState();persistAdminSettings();persistBistrackEntered();}
 window.addEventListener('beforeunload',persistAll);
+/* Phase 8v-3ap: wrap every persistence function so each call marks the
+   live-sync dirty flag. Debounced writer (_runLiveSync) then flushes
+   spp-live.json to the connected data folder within ~3 seconds. The
+   wrappers are applied at end-of-script to ensure all functions exist
+   first. The wrap is idempotent — applied once via a guard flag. */
+(function(){
+  if(window._liveSyncWrapped)return;
+  const fns=['persistProjects','persistSalesReps','persistCompanyOverrides','persistUserTags','persistUserProjectTypes','persistScanState','persistAdminSettings','persistBistrackEntered','persistAll'];
+  fns.forEach(function(name){
+    const orig=window[name];
+    if(typeof orig!=='function')return;
+    window[name]=function(){
+      const r=orig.apply(this,arguments);
+      try{_markLiveSyncDirty();}catch(_){}
+      return r;
+    };
+  });
+  window._liveSyncWrapped=true;
+})();
 document.addEventListener('visibilitychange',function(){if(document.hidden)persistAll();});
 /* Phase 8i — normalise date strings to ISO 8601 (YYYY-MM-DD).
    Audit found Project.emails[].date was stored as "DD MMM YYYY" while
@@ -8974,12 +9137,64 @@ function _buildSnapshotPayload(reason){
       capturedAt:new Date().toISOString(),
       capturedBy:ME||'auto',
       reason:reason||'daily-auto',
-      build:'2026-05-08ao · customer-reminder-category-tag'
+      build:'2026-05-08ap · customer-reminder-popup-and-live-sync'
     },
     projects,salesReps,companyOverrides,userTags,userProjectTypes,
     scanState:inboxScanState,adminSettings,bistrackEntered
   };
 }
+/* ========================================================================
+   Phase 8v-3ap — live FSA sync (OneDrive parity)
+   ========================================================================
+   Daily snapshots are point-in-time archives. The live file is the
+   current state of the CRM, written within seconds of any change. If
+   the data folder is on OneDrive, every change replicates to other
+   devices via OneDrive sync. Restoration is via Data & storage → Import
+   from JSON (pick spp-live.json). Debounced 3 seconds so a flurry of
+   edits collapses into a single write. */
+const _LIVE_FILE_NAME='spp-live.json';
+let _liveSyncDirty=false;
+let _liveSyncTimer=null;
+let _liveSyncInFlight=false;
+function _markLiveSyncDirty(){
+  _liveSyncDirty=true;
+  if(_liveSyncTimer||_liveSyncInFlight)return;
+  _liveSyncTimer=setTimeout(_runLiveSync,3000);
+}
+async function _runLiveSync(){
+  _liveSyncTimer=null;
+  if(!_liveSyncDirty)return;
+  if(!dataDirHandle)return;
+  /* If a write is in flight, wait — the dirty flag will trigger another
+     pass when this one resolves. Avoids overlapping writeable streams on
+     the same file handle (some browsers throw). */
+  if(_liveSyncInFlight)return;
+  _liveSyncInFlight=true;
+  _liveSyncDirty=false;
+  try{
+    const payload=_buildSnapshotPayload('live');
+    payload._meta=payload._meta||{};
+    payload._meta.kind='live';
+    payload._meta.writtenAt=new Date().toISOString();
+    await writeSnapshotFile(_LIVE_FILE_NAME,payload);
+  }catch(e){
+    try{console.warn('[Phase 8v-3ap] live sync write failed',e);}catch(_){}
+    /* Re-mark dirty so a retry happens on next change. */
+    _liveSyncDirty=true;
+  }finally{
+    _liveSyncInFlight=false;
+    /* If something dirty'd during the write, schedule another. */
+    if(_liveSyncDirty&&!_liveSyncTimer){_liveSyncTimer=setTimeout(_runLiveSync,3000);}
+  }
+}
+/* Flush on tab close so the last bit of work isn't lost in transit. */
+window.addEventListener('beforeunload',function(){
+  /* Synchronous flush isn't possible with FSA — beforeunload is too fast
+     for the async write to complete reliably. Best we can do is fire the
+     write and hope. localStorage state is intact regardless. */
+  if(_liveSyncDirty&&dataDirHandle){try{_runLiveSync();}catch(_){}}
+});
+
 async function takeSnapshot(reason){
   const todayDate=new Date().toISOString().slice(0,10);
   const isDailyAuto=!reason||reason==='daily-auto';
@@ -9139,7 +9354,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-08ao · customer-reminder-category-tag';
+const BACKUP_BUILD='2026-05-08ap · customer-reminder-popup-and-live-sync';
 function exportBackup(){
   const payload={
     _meta:{
@@ -10435,7 +10650,11 @@ function renderCoDetailsSection(co){
         </div>
         ${_renderCoAddInputs(currentCoTlType)}
         <div class="cco-note-add-row" style="justify-content:flex-end;">
-          <button class="cco-note-save-btn" onclick="addCompanyTimelineEntry()">${currentCoTlType==='reminder'?'Save reminder':currentCoTlType==='meeting'?'Save &amp; create Teams meeting':'Save'}</button>
+          <!-- Phase 8v-3ap: when type=reminder the inline inputs are gone
+               (replaced with an "Open editor" button — see _renderCoAddInputs).
+               The Save button is hidden in that mode so we don't show two
+               primary actions for the same intent. -->
+          ${currentCoTlType==='reminder'?'':'<button class="cco-note-save-btn" onclick="addCompanyTimelineEntry()">'+(currentCoTlType==='meeting'?'Save &amp; create Teams meeting':'Save')+'</button>'}
         </div>
       </div>
       <div class="cco-fact-lbl" style="margin-top:18px;margin-bottom:6px;">Assigned rep</div>
@@ -10823,13 +11042,13 @@ function _renderCoAddInputs(type){
     return '<textarea id="cco-note-text" class="cco-inp-textarea" rows="3" placeholder="Add a note — relationships, preferences, history, gotchas…"></textarea>';
   }
   if(type==='reminder'){
-    return ''
-      +'<input type="text" id="cco-note-text" class="cco-inp-select" style="width:100%;margin-bottom:8px;" placeholder="What to follow up on (e.g. tender response)"/>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        +'<input type="date" id="cco-note-rem-date" class="cco-inp-select" style="max-width:160px;" value=""/>'
-        /* Phase 8v-3am: Critical checkbox dropped. All reminders now push
-           to Outlook calendar at 10:00 on the due date (weekday) and
-           auto-follow-up after 7 days if not actioned. */
+    /* Phase 8v-3ap: customer reminders open in the same popup as project
+       reminders — gives a notes textarea alongside text + date. The
+       inline UI was missing notes; the popup matches project parity. */
+    const coNameJson=JSON.stringify(currentCompany||'').replace(/"/g,'&quot;');
+    return '<div style="padding:18px 14px;border:1px dashed #c7d2e0;background:#fafcff;border-radius:8px;text-align:center;font-size:13px;color:#555;line-height:1.5;">'
+      +'<div style="margin-bottom:10px;">Set a customer reminder with text, date, and notes &mdash; pushes to Outlook calendar at 10:00 on the due weekday, auto-follow-up after 7 days if not actioned.</div>'
+      +'<button class="btn btn-sm btn-primary" type="button" onclick="showCustomerReminderModal('+coNameJson+')">Open reminder editor &mdash;</button>'
       +'</div>';
   }
   /* call-in / call-out / meeting all use the same 4-field layout */
@@ -10865,30 +11084,12 @@ async function addCompanyTimelineEntry(){
   if(currentCoTlType==='note'){
     entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text,reminder:null};
   }else if(currentCoTlType==='reminder'){
-    const rdRaw=(document.getElementById('cco-note-rem-date').value||'').trim();
-    if(!rdRaw){alert('Please pick a reminder date.');return;}
-    /* Phase 8v-3am: weekend-shift the reminder date — all reminders land
-       on a weekday. Critical flag dropped from the data model. */
-    const rd=_shiftIsoToNextWeekday(rdRaw);
-    entry={id:nextCompanyNoteId(),type:'note',date:today4,author,text:'Reminder set — '+text,reminder:{date:rd,text,done:false}};
-    /* Phase 8v-3an: push to Outlook calendar at 10:00 on the weekday date.
-       Fire-and-forget; the calendar event id stamps onto the entry once
-       the promise resolves. */
-    setTimeout(function(){
-      try{
-        const dueIso=_reminderDueIsoAt10am(rd);
-        _createCompanyReminderEvent(currentCompany,entry.reminder,dueIso,{note:''}).then(function(evt){
-          if(!evt)return;
-          const fresh=ov.noteEntries.find(function(x){return x.id===entry.id;});
-          if(fresh&&fresh.reminder){
-            fresh.reminder.calendarEventId=evt.id;
-            fresh.reminder.calendarEventWebLink=evt.webLink||'';
-            fresh.reminder.calendarEventSubject=evt.subject||'';
-            try{persistCompanyOverrides();}catch(_){}
-          }
-        }).catch(function(err){try{console.warn('[Phase 8v-3an] company reminder push failed',err);}catch(_){}});
-      }catch(_){}
-    },10);
+    /* Phase 8v-3ap: customer reminders route through the same modal as
+       project reminders. _saveCustomerReminderFromModal does the actual
+       persistence + Outlook calendar push with the SPP-Customer-Reminder
+       category at 10:00 weekday. */
+    showCustomerReminderModal(currentCompany);
+    return;
   }else{
     /* call-in / call-out / meeting */
     const notesEl=document.getElementById('cco-note-notes');
@@ -12402,7 +12603,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-08ao · customer-reminder-category-tag','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-08ap · customer-reminder-popup-and-live-sync','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
