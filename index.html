@@ -2068,12 +2068,24 @@ async function runRealInboxScan(daysBack){
   if(!requireAdmin('Inbox scan'))return;
   /* Phase 8v-2l: if a previous scan is still in review, offer resume so the
      user doesn't lose hours of fetching by accidentally re-clicking the
-     sidebar entry or by closing/reopening the modal. */
+     sidebar entry or by closing/reopening the modal.
+     Phase 8v-3ar: only prompt if there is ACTIONABLE work left. The naive
+     "everything not in decisions" count includes ignore + already-imported
+     rows that NEVER surface in the review UI, so the prompt would fire
+     even when the user had finished every reviewable row. Mirror the
+     _outstandingScanCount fix already used by the dashboard banner, and
+     auto-discard the stale state (including the persisted copy) when
+     nothing is left to action — no need to nag the user with a Cancel
+     click before a fresh scan can start. */
   if(realScanState&&realScanState.phase==='review'){
-    const remaining=(realScanState.classified||[]).filter(function(c){return !realScanState.decisions.has(c.email.id);}).length;
-    const resume=confirm('You have an in-progress inbox scan with '+remaining+' candidate'+(remaining===1?'':'s')+' still to review.\n\nClick OK to resume the existing review.\nClick Cancel to discard it and run a fresh scan.');
-    if(resume){showRealScanModal();renderRealScanReview();return;}
+    const remaining=_outstandingScanCount();
+    if(remaining>0){
+      const resume=confirm('You have an in-progress inbox scan with '+remaining+' candidate'+(remaining===1?'':'s')+' still to review.\n\nClick OK to resume the existing review.\nClick Cancel to discard it and run a fresh scan.');
+      if(resume){showRealScanModal();renderRealScanReview();return;}
+    }
     realScanState=null;
+    try{localStorage.removeItem(REAL_SCAN_KEY);}catch(_){}
+    try{renderOutstandingScanBanner();}catch(_){}
   }
   const days=daysBack||(scanSettings&&scanSettings.firstScanDays)||365;
   realScanState={phase:'fetching',emails:[],classified:[],decisions:new Map(),selectedEmailIds:new Set(),daysBack:days,fetchedSoFar:0,fetchedPages:0};
@@ -3975,8 +3987,45 @@ function matchEmailsBatch(emails){
   });
   function classifyOne(e){
     /* Phase 8v-2n: top priority — if this email is already linked to any
-       project, it's been processed in a previous session. Skip from review. */
-    if(_isEmailAlreadyLinked(e.id))return {email:e,decision:'already-imported',projectId:null,reason:'already linked to a project'};
+       project, it's been processed in a previous session. Skip from review.
+       Phase 8v-3ar: EXCEPT when the user is running a re-review sweep AND
+       has explicitly applied the configured review category (typically
+       "SPP-CRM-Review") to this email in Outlook. The whole reason that
+       category exists is to give the user a way to drag an already-linked
+       email back into the review queue (wrong project, missed reply,
+       etc.). Short-circuiting to 'already-imported' here swallowed the
+       very rows the re-review scan exists to surface — the email ended
+       up only in the silent "Already linked: N" footer count. When the
+       user has tagged it for review, surface it as a normal review-link
+       row with the originally-linked project pre-selected as a candidate
+       so they can confirm, relink, or skip. */
+    if(_isEmailAlreadyLinked(e.id)){
+      const reviewMode=(typeof realScanState!=='undefined'&&realScanState&&realScanState.reviewMode);
+      const reviewCat=reviewMode
+        ?((realScanState.reviewCategory||(scanSettings&&scanSettings.reviewCategory)||'').trim())
+        :'';
+      const flaggedForReview=reviewCat&&Array.isArray(e.categories)&&e.categories.indexOf(reviewCat)>=0;
+      if(!flaggedForReview){
+        return {email:e,decision:'already-imported',projectId:null,reason:'already linked to a project'};
+      }
+      /* Find the project this email is already linked to, so we can hand
+         it back as a pre-selected candidate in the review-link bucket. */
+      let linkedProject=null;
+      for(let pi=0;pi<projects.length&&!linkedProject;pi++){
+        const pj=projects[pi];
+        if(!pj||!Array.isArray(pj.emails))continue;
+        for(let ei=0;ei<pj.emails.length;ei++){
+          if(pj.emails[ei]&&pj.emails[ei].id===e.id){linkedProject=pj;break;}
+        }
+      }
+      return {
+        email:e,
+        decision:'review-ambiguous',
+        projectId:null,
+        candidates:linkedProject?[{id:linkedProject.id,name:linkedProject.name}]:[],
+        reason:'flagged with "'+reviewCat+'" for re-review'+(linkedProject?' (currently linked to '+linkedProject.name+')':'')
+      };
+    }
     /* Next priority: ignore-list and internal-only override everything. */
     if(_emailMatchesIgnoreList(e))return {email:e,decision:'ignore',projectId:null,reason:'ignore-list match'};
     if(_isInternalOnly(e))return {email:e,decision:'ignore',projectId:null,reason:'internal-only chatter'};
@@ -5257,11 +5306,20 @@ async function runScanSinceLastRun(){
    the review category gets stripped from those emails (when
    stripReviewOnLink is on) so the next run doesn't re-surface them. */
 async function runReviewScan(){
+  /* Phase 8v-3ar: same fix as runRealInboxScan — only prompt to resume if
+     there are actually rows the user can still action. ignore + already-
+     imported rows aren't surfaced in the review UI, so they shouldn't
+     keep an empty review modal alive and force the user to click Cancel
+     before a fresh sweep can start. */
   if(realScanState&&realScanState.phase==='review'){
-    const remaining=(realScanState.classified||[]).filter(function(c){return !realScanState.decisions.has(c.email.id);}).length;
-    const resume=confirm('A scan is already in review ('+remaining+' candidate'+(remaining===1?'':'s')+' left). OK to resume that one; Cancel to discard and run a fresh re-review sweep.');
-    if(resume){showRealScanModal();renderRealScanReview();return;}
+    const remaining=_outstandingScanCount();
+    if(remaining>0){
+      const resume=confirm('A scan is already in review ('+remaining+' candidate'+(remaining===1?'':'s')+' left). OK to resume that one; Cancel to discard and run a fresh re-review sweep.');
+      if(resume){showRealScanModal();renderRealScanReview();return;}
+    }
     realScanState=null;
+    try{localStorage.removeItem(REAL_SCAN_KEY);}catch(_){}
+    try{renderOutstandingScanBanner();}catch(_){}
   }
   const cat=(scanSettings&&scanSettings.reviewCategory||'').trim();
   if(!cat){
