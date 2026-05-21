@@ -11,7 +11,18 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a18;font-size:14px;}
-.app{display:flex;height:100vh;overflow:hidden;}
+.app-shell{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+.app{display:flex;flex:1;min-height:0;overflow:hidden;}
+/* Phase 8w-1: data folder reconnect banner. Shown when a saved folder
+   handle exists in IDB but the browser has dropped its permission grant
+   (which happens on every app/browser restart by spec). Sits above the
+   topbar so it's impossible to miss. */
+.df-banner{display:flex;align-items:center;gap:12px;padding:10px 20px;background:#fff4d6;border-bottom:1px solid #e9c97a;font-size:13px;color:#5a4400;flex-shrink:0;}
+.df-banner-icon{flex-shrink:0;width:18px;height:18px;color:#a87000;}
+.df-banner-text{flex:1;min-width:0;}
+.df-banner-text strong{color:#3a2c00;}
+.df-banner-actions{display:flex;gap:8px;flex-shrink:0;}
+.df-banner .btn{font-size:12px;padding:5px 12px;}
 
 /* Sidebar */
 .sidebar{width:220px;min-width:220px;background:#fff;border-right:1px solid #e8e8e4;display:flex;flex-direction:column;}
@@ -671,6 +682,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
   </div>
 </div>
+<div class="app-shell">
+<!-- Phase 8w-1: data folder reconnect banner. Hidden by default; populated
+     and shown by renderDataFolderBanner() when a saved handle exists but
+     permission has been dropped. -->
+<div id="data-folder-banner" class="df-banner" style="display:none;" role="status">
+  <svg class="df-banner-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5a1 1 0 011-1h3l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V5z"/><path d="M8 7.5v2.5M8 11v.5" stroke-linecap="round"/></svg>
+  <div class="df-banner-text" id="data-folder-banner-text">Reconnect your data folder to resume snapshot saving.</div>
+  <div class="df-banner-actions">
+    <button class="btn btn-sm btn-primary" onclick="reconnectDataFolder()">Reconnect</button>
+    <button class="btn btn-sm" onclick="dismissDataFolderBanner()" title="Hide this banner for now">Not now</button>
+  </div>
+</div>
 <div class="app">
 
 <!-- SIDEBAR -->
@@ -709,7 +732,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-12 · soft live · scan-overrides-and-banner-fix</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-21 · soft live · 8w-1 data-folder reconnect banner</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -1637,6 +1660,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="modal-lock"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg>Admin only — requires Office 365 admin consent to read shared mailboxes</div>
   </div>
 </div>
+</div><!-- /app-shell (Phase 8w-1) -->
 
 <script>
 /* ========================================================================
@@ -9126,6 +9150,16 @@ const SNAPSHOT_PREFIX='spp.snapshot.';
 const SNAPSHOT_KEEP_DAYS=7;
 const SNAPSHOTS_SUBDIR='snapshots';
 let dataDirHandle=null; /* FileSystemDirectoryHandle when folder connected. */
+/* Phase 8w-1: separate "saved-but-not-granted" handle. Browsers reset FSA
+   permission to 'prompt' on every browser restart by spec, even though the
+   handle itself survives in IDB. We keep the handle in this var so the
+   reconnect banner and the first-click auto-prompt can call
+   requestPermission() on it synchronously inside the user gesture. */
+let savedDataDirHandle=null;
+/* Phase 8w-1: per-session dismiss flag. Cleared on next page load so the
+   banner reappears the next morning, but stays hidden if the user clicks
+   "Not now". */
+let dataFolderBannerDismissed=false;
 
 /* IndexedDB helpers — FileSystemDirectoryHandle can't live in localStorage,
    it requires structured-clone storage which IDB provides. */
@@ -9142,13 +9176,26 @@ function _idbSet(key,value){return _idbOpen().then(function(db){return new Promi
 function _idbDel(key){return _idbOpen().then(function(db){return new Promise(function(resolve,reject){const tx=db.transaction('handles','readwrite');tx.objectStore('handles').delete(key);tx.oncomplete=function(){resolve();};tx.onerror=function(){reject(tx.error);};});});}
 function fsaSupported(){return typeof window!=='undefined'&&typeof window.showDirectoryPicker==='function';}
 async function _ensureDirPermission(handle){if(!handle)return false;try{const p=await handle.queryPermission({mode:'readwrite'});if(p==='granted')return true;const r=await handle.requestPermission({mode:'readwrite'});return r==='granted';}catch(e){return false;}}
-async function loadSavedDataDir(){try{const h=await _idbGet('dataDir');if(!h)return false;const p=await h.queryPermission({mode:'readwrite'});if(p==='granted'){dataDirHandle=h;return true;}}catch(e){}return false;}
+async function loadSavedDataDir(){
+  /* Phase 8w-1: stash the handle in savedDataDirHandle even when permission
+     isn't currently granted. The banner + first-click auto-prompt need the
+     handle reference to call requestPermission() inside a user gesture. */
+  try{
+    const h=await _idbGet('dataDir');
+    if(!h)return false;
+    savedDataDirHandle=h;
+    const p=await h.queryPermission({mode:'readwrite'});
+    if(p==='granted'){dataDirHandle=h;return true;}
+  }catch(e){}
+  return false;
+}
 async function chooseDataFolder(){
   if(!fsaSupported()){alert('This browser does not support local folder access. Use Chrome, Edge, or Opera.');return;}
   try{
     const handle=await window.showDirectoryPicker({mode:'readwrite'});
     if(!await _ensureDirPermission(handle)){alert('Permission to write was denied.');return;}
     dataDirHandle=handle;
+    savedDataDirHandle=handle;
     /* Persist the handle for next session. Failure here is non-fatal — user
        just has to reconnect via the button on next launch. Migration still
        runs even if IDB write fails. */
@@ -9156,24 +9203,97 @@ async function chooseDataFolder(){
     const moved=await migrateLocalSnapshotsToFile();
     alert('Data folder connected: '+handle.name+'\n\nSnapshots will be written to:\n  '+handle.name+'/'+SNAPSHOTS_SUBDIR+'/\n\n'+(moved?'Migrated '+moved+' existing snapshot'+(moved===1?'':'s')+' to the folder.\n\n':'')+'If this folder is inside OneDrive, your snapshots automatically sync to the cloud.');
     if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();
+    if(typeof renderDataFolderBanner==='function')renderDataFolderBanner();
     if(typeof renderSnapshotList==='function')await renderSnapshotList();
   }catch(e){if(e.name==='AbortError')return;alert('Could not connect data folder: '+(e.message||e.name));}
 }
 async function reconnectDataFolder(){
-  /* User-gesture driven re-grant when permission has been revoked. */
+  /* User-gesture driven re-grant when permission has been revoked.
+     Phase 8w-1: prefer the in-memory savedDataDirHandle so we call
+     requestPermission() synchronously inside the gesture. Awaiting _idbGet
+     first would consume the gesture and the prompt would silently fail. */
   try{
-    const h=await _idbGet('dataDir');
+    const h=savedDataDirHandle||await _idbGet('dataDir');
     if(!h){await chooseDataFolder();return;}
-    if(await _ensureDirPermission(h)){dataDirHandle=h;if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();if(typeof renderSnapshotList==='function')await renderSnapshotList();}
+    if(await _ensureDirPermission(h)){
+      dataDirHandle=h;
+      savedDataDirHandle=h;
+      if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();
+      if(typeof renderDataFolderBanner==='function')renderDataFolderBanner();
+      if(typeof renderSnapshotList==='function')await renderSnapshotList();
+    }
     else alert('Permission was denied. Snapshots will continue to write to browser storage until you reconnect.');
   }catch(e){alert('Could not reconnect: '+(e.message||e.name));}
 }
 async function disconnectDataFolder(){
   if(!confirm('Disconnect the data folder?\n\nFuture snapshots will go to your browser\'s storage instead. Existing snapshots in the folder are NOT deleted; they just stop appearing in the list until you reconnect.'))return;
   dataDirHandle=null;
+  savedDataDirHandle=null;
   try{await _idbDel('dataDir');}catch(e){}
   if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();
+  if(typeof renderDataFolderBanner==='function')renderDataFolderBanner();
   if(typeof renderSnapshotList==='function')await renderSnapshotList();
+}
+/* Phase 8w-1: show or hide the reconnect banner. The banner appears when:
+     (a) the browser supports FSA,
+     (b) a folder handle is saved in IDB from a prior session,
+     (c) but the permission grant has been dropped (so dataDirHandle is null),
+     (d) and the user hasn't dismissed the banner this session.
+   Visible state is purely derived from these flags — every call recomputes. */
+function renderDataFolderBanner(){
+  const el=document.getElementById('data-folder-banner');
+  if(!el)return;
+  const shouldShow=fsaSupported()&&!!savedDataDirHandle&&!dataDirHandle&&!dataFolderBannerDismissed;
+  if(!shouldShow){el.style.display='none';return;}
+  const textEl=document.getElementById('data-folder-banner-text');
+  if(textEl){
+    const name=(savedDataDirHandle&&savedDataDirHandle.name)?savedDataDirHandle.name:'your previously chosen folder';
+    textEl.innerHTML='Data folder not connected. Reconnect to <strong>'+esc(name)+'</strong> to keep saving snapshots to disk.';
+  }
+  el.style.display='flex';
+}
+function dismissDataFolderBanner(){
+  dataFolderBannerDismissed=true;
+  renderDataFolderBanner();
+}
+/* Phase 8w-1: opportunistic auto-prompt on the user's first interaction
+   after page load. Browsers block requestPermission() outside a user
+   gesture, so the only way to "auto-reconnect" is to piggyback on the
+   user's first click. We attach a once-only capturing listener to the
+   .app element (NOT document) so signin-overlay clicks during MSAL
+   loading don't consume it. Clicks inside the banner are ignored — the
+   banner buttons handle reconnect themselves and we don't want a double
+   prompt. */
+function _attachFirstClickAutoPrompt(){
+  if(!savedDataDirHandle||dataDirHandle)return;
+  const appEl=document.querySelector('.app');
+  if(!appEl)return;
+  let fired=false;
+  const handler=function(ev){
+    if(fired)return;
+    /* Ignore clicks inside the banner — it has its own button paths. */
+    if(ev.target&&ev.target.closest&&ev.target.closest('#data-folder-banner'))return;
+    /* If permission already came back via the banner button between
+       listener attach and this click, do nothing. */
+    if(dataDirHandle||!savedDataDirHandle)return;
+    fired=true;
+    appEl.removeEventListener('click',handler,true);
+    /* Fire-and-forget. We deliberately do NOT preventDefault/stopPropagation
+       so the user's click still lands on whatever they actually clicked.
+       requestPermission() opens a browser-level prompt above the page. */
+    (async function(){
+      try{
+        const r=await savedDataDirHandle.requestPermission({mode:'readwrite'});
+        if(r==='granted'){
+          dataDirHandle=savedDataDirHandle;
+          if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();
+          if(typeof renderDataFolderBanner==='function')renderDataFolderBanner();
+          if(typeof renderSnapshotList==='function')await renderSnapshotList();
+        }
+      }catch(e){try{console.warn('[Phase 8w-1] auto-prompt requestPermission failed',e);}catch(_){}}
+    })();
+  };
+  appEl.addEventListener('click',handler,true);
 }
 async function _getSnapshotsDir(){if(!dataDirHandle)return null;return await dataDirHandle.getDirectoryHandle(SNAPSHOTS_SUBDIR,{create:true});}
 async function writeSnapshotFile(name,payload){const dir=await _getSnapshotsDir();if(!dir)return false;const fh=await dir.getFileHandle(name,{create:true});const w=await fh.createWritable();await w.write(JSON.stringify(payload,null,2));await w.close();return true;}
@@ -9425,11 +9545,16 @@ function renderDataFolderStatus(){
 }
 /* Run daily snapshot on load. Deferred via setTimeout so all module-level
    `let` bindings are initialised first. Restores the saved data folder
-   handle from IndexedDB if one was previously chosen. */
+   handle from IndexedDB if one was previously chosen.
+   Phase 8w-1: also shows the reconnect banner and arms the first-click
+   auto-prompt when a saved handle exists but its permission was dropped
+   over the browser restart. */
 setTimeout(async function(){
   try{await loadSavedDataDir();}catch(e){}
   try{await takeDailySnapshotIfDue();}catch(e){try{console.warn('[Phase 8m] daily snapshot failed',e);}catch(_){}}
   if(typeof renderDataFolderStatus==='function')renderDataFolderStatus();
+  if(typeof renderDataFolderBanner==='function')renderDataFolderBanner();
+  if(typeof _attachFirstClickAutoPrompt==='function')_attachFirstClickAutoPrompt();
 },0);
 
 /* Phase 8j — Export and Import JSON backup.
@@ -9438,7 +9563,7 @@ setTimeout(async function(){
    in-app state. Same shape doubles as the input format for the future
    federated-collate tool. */
 const BACKUP_FORMAT='spp.projects.v1';
-const BACKUP_BUILD='2026-05-12 · soft live · scan-overrides-and-banner-fix';
+const BACKUP_BUILD='2026-05-21 · soft live · 8w-1 data-folder reconnect banner';
 function exportBackup(){
   const payload={
     _meta:{
@@ -12687,7 +12812,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-12 · soft live · scan-overrides-and-banner-fix','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-21 · soft live · 8w-1 data-folder reconnect banner','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
