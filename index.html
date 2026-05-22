@@ -732,7 +732,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-05-21 · soft live · 8w-1 data-folder reconnect banner</div>
+  <div class="build-stamp" id="build-stamp">build 2026-05-22 · soft live · 8w-2 customer card add-contact</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -7648,6 +7648,23 @@ function copyCurrentProjectRef(ev){
    accidentally-created blank from "+ New contact" with no fields filled). */
 function deleteCurrentContact(){
   if(!currentContact)return;
+  /* Phase 8w-2: company-source contacts live on companyOverrides[key].contacts[]. */
+  if(currentContact.source==='company'){
+    const ov=companyOverrides[currentContact.companyKey];
+    if(!ov||!Array.isArray(ov.contacts))return;
+    const c=ov.contacts[currentContact.contactIndex];
+    if(!c)return;
+    const isEmpty=!c.name&&!c.email&&!c.phone&&!c.role&&!c.company;
+    if(!isEmpty){
+      const label=c.name||c.email||'this contact';
+      if(!confirm('Delete '+label+' from this customer record?\n\nThis only removes the manually-added contact. Project-linked contacts for this customer are untouched.'))return;
+    }
+    ov.contacts.splice(currentContact.contactIndex,1);
+    persistCompanyOverrides();
+    hideContactModal();
+    if(typeof renderCompanyTab==='function')try{renderCompanyTab();}catch(e){}
+    return;
+  }
   const p=projects.find(function(x){return x.id===currentContact.projectId;});
   if(!p)return;
   const c=p.contacts&&p.contacts[currentContact.contactIndex];
@@ -7676,10 +7693,83 @@ function addNewContact(projectId){
     if(nameInput)nameInput.focus();
   },50);
 }
+/* Phase 8w-2: manually add a contact to a customer (company-level), independent
+   of any project. Stored on companyOverrides[norm].contacts[] and surfaced via
+   deriveCompanies. Use for cold leads or phone-captured contacts. */
+function addContactToCompany(companyName){
+  if(!companyName)return;
+  const key=String(companyName).toLowerCase();
+  const ov=ensureCompanyOverride(key);
+  if(!Array.isArray(ov.contacts))ov.contacts=[];
+  const remembered=(typeof _lookupCompanyRole==='function')?_lookupCompanyRole(companyName):'';
+  const blank={name:'',email:'',phone:'',role:'',company:companyName,type:remembered||'',init:'??'};
+  ov.contacts.push(blank);
+  persistCompanyOverrides();
+  if(typeof renderCompanyTab==='function')try{renderCompanyTab();}catch(_){}
+  openCompanyContactModal(key,ov.contacts.length-1);
+  setTimeout(function(){
+    const nameInput=document.getElementById('cm-input-name');
+    if(nameInput)nameInput.focus();
+  },50);
+}
+/* Phase 8w-2: contact modal opener for company-source contacts. Mirrors
+   openContactModal but reads from companyOverrides[companyKey].contacts[idx]
+   and tags currentContact with source='company'. Plain mailto (no project ref). */
+function openCompanyContactModal(companyKey,contactIndex){
+  const ov=companyOverrides[companyKey];
+  if(!ov||!Array.isArray(ov.contacts))return;
+  const c=ov.contacts[contactIndex];
+  if(!c)return;
+  currentContact={source:'company',companyKey:companyKey,contactIndex:contactIndex,data:c};
+  const av=document.getElementById('cm-avatar');
+  av.textContent=c.init||'??';
+  av.className='ca lg '+(CONTACT_TYPE_CLS[c.type]||CONTACT_TYPE_UNASSIGNED);
+  document.getElementById('cm-name').textContent=c.name||c.email||'Unknown';
+  document.getElementById('cm-role').textContent=[c.role,CONTACT_TYPE_LABEL[c.type]||(c.type?'':'Unassigned')].filter(Boolean).join(' · ')||'—';
+  document.getElementById('cm-company').textContent=c.company||'';
+  const typeButtons=document.querySelectorAll('#cm-type-buttons button');
+  typeButtons.forEach(function(btn){
+    const isActive=(btn.getAttribute('data-type')||'')===(c.type||'');
+    btn.classList.toggle('btn-primary',isActive);
+    btn.style.opacity=isActive?'1':'0.7';
+  });
+  const remCo=document.getElementById('cm-remember-co');
+  if(remCo)remCo.textContent=c.company||'this company';
+  const remCheckbox=document.getElementById('cm-remember-role');
+  if(remCheckbox)remCheckbox.disabled=!c.company;
+  const nameInput=document.getElementById('cm-input-name');
+  const roleInput=document.getElementById('cm-input-role');
+  const companyInput=document.getElementById('cm-input-company');
+  const emailInput=document.getElementById('cm-input-email');
+  const phoneInput=document.getElementById('cm-input-phone');
+  if(nameInput)nameInput.value=c.name||'';
+  if(roleInput)roleInput.value=c.role||'';
+  if(companyInput)companyInput.value=c.company||'';
+  if(emailInput)emailInput.value=c.email||'';
+  if(phoneInput)phoneInput.value=c.phone||'';
+  const emailBtn=document.getElementById('cm-email-btn');
+  if(c.email&&emailBtn){
+    emailBtn.href='mailto:'+c.email;
+    emailBtn.classList.remove('cm-btn-disabled');
+    emailBtn.removeAttribute('onclick');
+  } else if(emailBtn){
+    emailBtn.removeAttribute('href'); emailBtn.classList.add('cm-btn-disabled');
+    emailBtn.setAttribute('onclick','event.preventDefault();');
+  }
+  const phoneBtn=document.getElementById('cm-call-btn');
+  if(c.phone&&phoneBtn){
+    phoneBtn.href='tel:'+c.phone.replace(/[^\d+]/g,''); phoneBtn.classList.remove('cm-btn-disabled');
+    phoneBtn.removeAttribute('onclick');
+  } else if(phoneBtn){
+    phoneBtn.removeAttribute('href'); phoneBtn.classList.add('cm-btn-disabled');
+    phoneBtn.setAttribute('onclick','event.preventDefault();');
+  }
+  document.getElementById('contact-modal').classList.add('open');
+}
 function openContactModal(projectId,contactIndex){
   const p=projects.find(x=>x.id===projectId); if(!p)return;
   const c=p.contacts[contactIndex]; if(!c)return;
-  currentContact={projectId,contactIndex,data:c};
+  currentContact={source:'project',projectId,contactIndex,data:c};
   const av=document.getElementById('cm-avatar');
   av.textContent=c.init||'??';
   av.className='ca lg '+(CONTACT_TYPE_CLS[c.type]||CONTACT_TYPE_UNASSIGNED);
@@ -7758,6 +7848,13 @@ function _saveContactField(field,value){
     else if(parts.length===1)c.init=parts[0].slice(0,2).toUpperCase();
     else c.init=((parts[0][0]||'')+(parts[parts.length-1][0]||'')).toUpperCase();
   }
+  /* Phase 8w-2: branch on source. */
+  if(currentContact.source==='company'){
+    persistCompanyOverrides();
+    openCompanyContactModal(currentContact.companyKey,currentContact.contactIndex);
+    if(currentCompany&&typeof renderCompanyTab==='function')try{renderCompanyTab();}catch(e){}
+    return;
+  }
   persistProjects();
   /* Re-render the modal so the header (name, role, company, initials) and
      the action buttons (mailto / tel) reflect the new value. */
@@ -7774,6 +7871,22 @@ function hideContactModal(){document.getElementById('contact-modal').classList.r
 function setContactType(newType){
   if(!currentContact)return;
   if(!(newType===''||newType==='architect'||newType==='mc'||newType==='sub'))return;
+  /* Phase 8w-2: company-source contacts skip the project-only side effects. */
+  if(currentContact.source==='company'){
+    const ov=companyOverrides[currentContact.companyKey];
+    if(!ov||!Array.isArray(ov.contacts))return;
+    const cc=ov.contacts[currentContact.contactIndex];
+    if(!cc)return;
+    cc.type=newType;
+    const remCheckbox=document.getElementById('cm-remember-role');
+    if(newType&&cc.company&&remCheckbox&&remCheckbox.checked){
+      _rememberCompanyRole(cc.company,newType);
+    }
+    persistCompanyOverrides();
+    openCompanyContactModal(currentContact.companyKey,currentContact.contactIndex);
+    if(currentCompany&&typeof renderCompanyTab==='function')try{renderCompanyTab();}catch(e){}
+    return;
+  }
   const p=projects.find(function(x){return x.id===currentContact.projectId;});
   if(!p)return;
   const c=p.contacts[currentContact.contactIndex];
@@ -10371,6 +10484,22 @@ function deriveCompanies(){
     /* Re-sort timeline newest first now that notes + reminders are in */
     co.timeline.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   });
+  /* Phase 8w-2: mix manually-added company-level contacts into co.contacts. */
+  Object.values(byName).forEach(function(co){
+    const norm=co.name.toLowerCase();
+    const ov=companyOverrides[norm];
+    if(!ov||!Array.isArray(ov.contacts))return;
+    ov.contacts.forEach(function(c,idx){
+      const nm=(c.name||'').toLowerCase();
+      const em=(c.email||'').toLowerCase();
+      const exists=co.contacts.find(function(x){
+        return (x.name||'').toLowerCase()===nm&&(x.email||'').toLowerCase()===em;
+      });
+      if(exists)return;
+      co.contacts.push(Object.assign({},c,{companyKey:norm,companyContactIndex:idx}));
+    });
+    co.contacts.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
+  });
   return byName;
 }
 
@@ -10894,18 +11023,40 @@ function renderCoDetailsSection(co){
 }
 
 function renderCoContactsSection(co){
-  if(!co.contacts.length)return '<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No contacts on file for this company.</div>';
   const cls=typeClass(co.type);
-  return '<div class="cg"><div class="cgh">Contacts ('+co.contacts.length+')</div>'+
+  /* Phase 8w-2: + New contact button. Always shown, even with 0 contacts.
+     Adds a company-level contact via addContactToCompany(). */
+  const coNameArg=JSON.stringify(co.name||'').replace(/"/g,'&quot;');
+  const headerRow='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #eee;">'
+    +'<div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;">Contacts ('+co.contacts.length+')</div>'
+    +'<button class="btn btn-sm btn-primary" onclick="addContactToCompany('+coNameArg+')" title="Add a contact manually — useful for cold leads or contacts captured by phone before any project email exists."><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="margin-right:5px;vertical-align:-2px;"><path d="M8 3v10M3 8h10"/></svg>New contact</button>'
+    +'</div>';
+  if(!co.contacts.length){
+    return '<div class="cg">'+headerRow
+      +'<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No contacts on file for this customer yet. Click <strong>New contact</strong> to add one manually, or wait for the inbox scan to pick them up from your emails.</div>'
+      +'</div>';
+  }
+  return '<div class="cg">'+headerRow+
     co.contacts.map(c=>{
-      const contactIdx=(projects.find(p=>p.id===c.projectId)||{contacts:[]}).contacts.findIndex(x=>x.name===c.name&&(x.email||'')===(c.email||''));
-      const onclickHandler=c.projectId&&contactIdx>=0?`openContactFromCompany(${c.projectId},${contactIdx})`:`alert('Contact detail view — this contact is currently linked only to a project that is not yet open.')`;
+      let onclickHandler;
+      if(c.companyKey){
+        const ck=JSON.stringify(c.companyKey).replace(/"/g,'&quot;');
+        onclickHandler='openCompanyContactModal('+ck+','+c.companyContactIndex+')';
+      } else if(c.projectId){
+        const contactIdx=(projects.find(p=>p.id===c.projectId)||{contacts:[]}).contacts.findIndex(x=>x.name===c.name&&(x.email||'')===(c.email||''));
+        onclickHandler=contactIdx>=0?'openContactFromCompany('+c.projectId+','+contactIdx+')':"alert('Contact detail view — this contact is currently linked only to a project that is not yet open.')";
+      } else {
+        onclickHandler="alert('Contact detail view — this contact has no project or company-level record.')";
+      }
+      const subLine=c.companyKey
+        ? 'Company-level contact'
+        : ('On project: '+esc(c.projectName||'')+' '+(c.projectRef?'· '+esc(c.projectRef):''));
       return `<div class="cr" onclick="${onclickHandler}">
-        <div class="ca ${cls}">${esc(c.init||companyInitials(c.name))}</div>
+        <div class="ca ${cls}">${esc(c.init||companyInitials(c.name)||'??')}</div>
         <div class="cr-meta">
-          <div style="font-size:13px;font-weight:500;">${esc(c.name)}</div>
+          <div style="font-size:13px;font-weight:500;">${esc(c.name||'(no name yet)')}</div>
           <div style="font-size:11px;color:#888;">${esc(c.role||'')}</div>
-          <div style="font-size:10px;color:#aaa;margin-top:2px;">On project: ${esc(c.projectName||'')} ${c.projectRef?'· '+esc(c.projectRef):''}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px;">${subLine}</div>
         </div>
         <svg class="cr-arrow" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
       </div>`;
@@ -12812,7 +12963,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-21 · soft live · 8w-1 data-folder reconnect banner','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-05-22 · soft live · 8w-2 customer card add-contact','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
