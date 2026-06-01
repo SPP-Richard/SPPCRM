@@ -2204,11 +2204,16 @@ function renderRealScanReview(){
   function notDecided(item){return !realScanState.decisions.has(item.email.id);}
   const autoKnown=c.filter(function(x){return (x.decision==='auto-explicit'||x.decision==='auto-thread'||x.decision==='auto-ref'||x.decision==='auto-name'||x.decision==='auto-contact')&&x.projectId&&notDecided(x);});
   const autoUnknown=c.filter(function(x){return (x.decision==='auto-explicit'||x.decision==='auto-thread')&&!x.projectId&&notDecided(x);});
-  const reviewLink=c.filter(function(x){return (x.decision==='review-ambiguous'||x.decision==='review-contact-multi')&&notDecided(x);});
+  const reviewLink=c.filter(function(x){return (x.decision==='review-ambiguous'||x.decision==='review-contact-multi'||x.decision==='review-contact-generic')&&notDecided(x);});
   const reviewNew=c.filter(function(x){return (x.decision==='review-new-overlap'||x.decision==='review-new-keyword')&&notDecided(x);});
   const ignored=c.filter(function(x){return x.decision==='ignore';});
   /* Phase 8v-2n: emails skipped because they're already linked to a project. */
   const alreadyLinked=c.filter(function(x){return x.decision==='already-imported';});
+  /* Phase 8v-3ar: parked items — user set aside to review later. */
+  const parked=c.filter(function(x){
+    const d=realScanState.decisions.get(x.email.id);
+    return d&&d.action==='parked';
+  });
   const decidedCount=realScanState.decisions.size;
   const totalCount=c.length;
   const selectedCount=realScanState.selectedEmailIds.size;
@@ -2240,6 +2245,7 @@ function renderRealScanReview(){
     +_renderRealScanBucket('Auto-import — needs project pick',autoUnknown,'auto-unknown','#a87000','Tagged with your project category but the matcher could not identify which project. Pick or create.')
     +_renderRealScanBucket('Review — link to existing',reviewLink,'review-link','#a87000','Subject or contact matches multiple projects. Pick which one.')
     +_renderRealScanBucket('Review — possibly new project',reviewNew,'review-new','#a87000','New-project enquiry candidates. Create a new project, link to existing, or skip.')
+    +_renderRealScanBucket('Parked — review later',parked,'parked','#5a4a7a','You parked these to read the original email and decide later. Click Open ↗ to open in Outlook, then Confirm / Skip / Un-park.')
     +'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#aaa;">Ignored: '+ignored.length+' (silently skipped — noreply, internal-only, or no signal)'
     +(alreadyLinked.length?' · Already linked: '+alreadyLinked.length+' (linked to a project in a previous scan)':'')
     +'</div>';
@@ -2348,6 +2354,17 @@ function _renderRealScanRow(c){
   const date=fmtDate((e.receivedAt||'').substring(0,10))||'';
   const reason=esc(c.reason);
   const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
+  /* Phase 8v-3ar: Open ↗ link — webLink is Graph's per-message URL. Lets
+     the user read the actual body before deciding (especially useful for
+     parked / generic-subject rows where the matcher hedged). */
+  const openLink=e.webLink?' · <a href="'+esc(e.webLink)+'" target="_blank" rel="noopener" style="color:#0c447c;text-decoration:none;" title="Open this email in Outlook">Open ↗</a>':'';
+  /* Phase 8v-3ar: Park / Un-park button. Park sets {action:'parked'} on the
+     decisions map; the dedicated Parked bucket re-surfaces the row. */
+  const _d=realScanState&&realScanState.decisions?realScanState.decisions.get(e.id):null;
+  const isParked=_d&&_d.action==='parked';
+  const parkBtn=isParked
+    ?'<button class="btn btn-sm" onclick="_realScanUnpark('+idJson+')" style="color:#0c447c;" title="Move this back to its original bucket">Un-park</button>'
+    :'<button class="btn btn-sm" onclick="_realScanPark('+idJson+')" style="color:#5a4a7a;" title="Set aside to review later — stays in the Parked bucket">Park</button>';
   /* Phase 8v-2n: per-row checkbox for bulk-skip selection. */
   const sel=realScanState&&realScanState.selectedEmailIds&&realScanState.selectedEmailIds.has(e.id);
   const checkboxHtml='<input type="checkbox" '+(sel?'checked':'')+' onclick="_realScanToggleSelect('+idJson+')" style="margin-top:2px;cursor:pointer;flex-shrink:0;" title="Tick to add to bulk-skip selection"/>';
@@ -2381,9 +2398,9 @@ function _renderRealScanRow(c){
     +checkboxHtml
     +'<div style="flex:1;min-width:0;">'
     +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
-    +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+'</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+openLink+'</div>'
     +'<div style="font-size:11px;color:#a87000;margin-bottom:8px;">'+reason+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button></div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button> '+parkBtn+'</div>'
     +'</div>'
     +'</div>';
 }
@@ -3075,6 +3092,21 @@ function _realScanSkip(emailId){
   realScanState.decisions.set(emailId,{action:'skipped'});
   /* Phase 8v-2n: clear from selection if it was ticked. */
   if(realScanState.selectedEmailIds)realScanState.selectedEmailIds.delete(emailId);
+  renderRealScanReview();
+}
+/* Phase 8v-3ar: Park / Un-park. Park records a decision so the row drops
+   out of its auto/review bucket, but a dedicated Parked bucket re-renders
+   it with the same row controls plus Un-park. Lets the user open the
+   email in Outlook (Open ↗ link), decide, then come back. */
+function _realScanPark(emailId){
+  if(!realScanState)return;
+  realScanState.decisions.set(emailId,{action:'parked'});
+  if(realScanState.selectedEmailIds)realScanState.selectedEmailIds.delete(emailId);
+  renderRealScanReview();
+}
+function _realScanUnpark(emailId){
+  if(!realScanState)return;
+  realScanState.decisions.delete(emailId);
   renderRealScanReview();
 }
 /* ====== Phase 8v-2n: bulk-skip selection handlers ====== */
@@ -3845,19 +3877,74 @@ function _tokenise(s){
     return w.length>=3&&!_STOPWORDS.has(w);
   });
 }
-function _findContactMatchProjects(email){
-  /* Returns ALL projects where any party (sender / to / cc) is in the
-     contacts list. The matcher needs the full set, not just the first hit,
-     because a contact can legitimately be on multiple projects. */
+/* Phase 8v-3ar: routing-time party list.
+   Three corrections vs. the raw email parties:
+     1) cc is dropped — distribution lists pollute routing.
+     2) @spp.co.uk addresses dropped — SPP staff are never the routing
+        key, even if one accidentally ended up in a project's contacts[].
+     3) If the sender is SPP and the email looks forwarded, harvest the
+        original external sender from bodyPreview and add it back —
+        so Rob forwarding an external enquiry still routes via the
+        original party rather than via Rob. */
+function _looksForwarded(email){
+  if(!email)return false;
+  const subj=String(email.subject||'');
+  if(/^\s*(fw|fwd):/i.test(subj))return true;
+  const body=String(email.bodyPreview||'');
+  if(/-+\s*forwarded message/i.test(body))return true;
+  if(/^\s*from:\s/im.test(body))return true;
+  return false;
+}
+function _extractForwardedSender(email){
+  /* Best-effort scrape: bodyPreview is the first ~255 chars of the body
+     as Graph returns it. Outlook forwards typically lead with a "From:"
+     line containing the original sender. Returns lowercased non-SPP
+     email or '' if nothing usable found. */
+  if(!email||!email.bodyPreview)return '';
+  const m=String(email.bodyPreview).match(/From:\s*[^<\n\r]*<?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})>?/i);
+  if(!m)return '';
+  const addr=m[1].toLowerCase();
+  if(_isSppStaffEmail(addr))return '';
+  return addr;
+}
+function _matchPartiesFor(email){
   if(!email)return [];
-  const parties=[email.fromEmail].concat(email.to||[],email.cc||[]).filter(Boolean).map(function(s){return s.toLowerCase();});
+  const raw=[email.fromEmail].concat(email.to||[]).filter(Boolean).map(function(s){return String(s).toLowerCase();});
+  const filtered=raw.filter(function(a){return !_isSppStaffEmail(a);});
+  if(_isSppStaffEmail(email.fromEmail||'')&&_looksForwarded(email)){
+    const fwd=_extractForwardedSender(email);
+    if(fwd&&filtered.indexOf(fwd)<0)filtered.push(fwd);
+  }
+  return filtered;
+}
+function _subjectHasDistinctiveToken(email){
+  /* True if subject carries at least one token long/non-generic enough to
+     count as a project signal. Used to demote auto-contact when the
+     subject is only commodity words ("battens", "FR gloss", "primer"). */
+  if(!email||!email.subject)return false;
+  const tokens=_tokenise(email.subject);
+  if(!tokens.length)return false;
+  const generic=_getGenericNameTokenSet();
+  return tokens.some(function(t){return _isDistinctiveNameToken(t,generic);});
+}
+function _findContactMatchProjects(email){
+  /* Returns ALL projects where any routing-relevant party (see
+     _matchPartiesFor) is in p.contacts[]. Each entry is
+     {project, matchedEmail} so callers can name the address that
+     triggered the match in the user-visible reason. */
+  if(!email)return [];
+  const parties=_matchPartiesFor(email);
   if(!parties.length)return [];
   const matched=[];
   for(let i=0;i<projects.length;i++){
     const p=projects[i];
     const contactsList=(p.contacts||[]).map(function(c){return (c.email||'').toLowerCase();}).filter(Boolean);
     if(!contactsList.length)continue;
-    if(parties.some(function(c){return contactsList.indexOf(c)>=0;}))matched.push(p);
+    let hit='';
+    for(let j=0;j<parties.length;j++){
+      if(contactsList.indexOf(parties[j])>=0){hit=parties[j];break;}
+    }
+    if(hit)matched.push({project:p,matchedEmail:hit});
   }
   return matched;
 }
@@ -4007,7 +4094,7 @@ function matchEmailsBatch(emails){
     if(taggedConvProject.has(e.conversationId))return;
     const refs=_findRefMatchProjects(e);if(refs.length===1){taggedConvProject.set(e.conversationId,refs[0]);return;}
     const names=_findNameMatchProjects(e);if(names.length===1){taggedConvProject.set(e.conversationId,names[0]);return;}
-    const contacts=_findContactMatchProjects(e);if(contacts.length===1){taggedConvProject.set(e.conversationId,contacts[0]);return;}
+    const contacts=_findContactMatchProjects(e);if(contacts.length===1){taggedConvProject.set(e.conversationId,contacts[0].project);return;}
   });
   function classifyOne(e){
     /* Phase 8v-2n: top priority — if this email is already linked to any
@@ -4058,7 +4145,7 @@ function matchEmailsBatch(emails){
       const refs=_findRefMatchProjects(e);
       const names=_findNameMatchProjects(e);
       const contacts=_findContactMatchProjects(e);
-      const p=(refs.length===1?refs[0]:null)||(names.length===1?names[0]:null)||(contacts.length===1?contacts[0]:null);
+      const p=(refs.length===1?refs[0]:null)||(names.length===1?names[0]:null)||(contacts.length===1?contacts[0].project:null);
       return {email:e,decision:'auto-explicit',projectId:p?p.id:null,reason:'category-tagged'+(p?' (→ '+p.name+')':' (project unknown — manual link needed)')};
     }
     /* Auto: thread of category-tagged */
@@ -4074,10 +4161,19 @@ function matchEmailsBatch(emails){
     const names=_findNameMatchProjects(e);
     if(names.length===1)return {email:e,decision:'auto-name',projectId:names[0].id,reason:'project name in subject (→ '+names[0].name+')'};
     if(names.length>1)return {email:e,decision:'review-ambiguous',projectId:null,candidates:names.map(function(p){return {id:p.id,name:p.name};}),reason:'subject matches '+names.length+' project names'};
-    /* Contact match — only auto if contact is on exactly one project */
+    /* Contact match — auto only when (a) the contact is unique to one
+       project AND (b) the subject carries at least one distinctive token.
+       Generic-only subjects ("Battens", "FR gloss") are demoted to review
+       because the contact-only signal is too weak there. */
     const contacts=_findContactMatchProjects(e);
-    if(contacts.length===1)return {email:e,decision:'auto-contact',projectId:contacts[0].id,reason:'contact on exactly one project (→ '+contacts[0].name+')'};
-    if(contacts.length>1)return {email:e,decision:'review-contact-multi',projectId:null,candidates:contacts.map(function(p){return {id:p.id,name:p.name};}),reason:'contact appears on '+contacts.length+' projects — pick which'};
+    if(contacts.length===1){
+      const hit=contacts[0];
+      if(!_subjectHasDistinctiveToken(e)){
+        return {email:e,decision:'review-contact-generic',projectId:null,candidates:[{id:hit.project.id,name:hit.project.name}],reason:hit.matchedEmail+' is on '+hit.project.name+' — subject too generic to auto-link'};
+      }
+      return {email:e,decision:'auto-contact',projectId:hit.project.id,reason:hit.matchedEmail+' on '+hit.project.name};
+    }
+    if(contacts.length>1)return {email:e,decision:'review-contact-multi',projectId:null,candidates:contacts.map(function(c){return {id:c.project.id,name:c.project.name};}),reason:'contact appears on '+contacts.length+' projects — pick which'};
     /* Address/name overlap (subject not a name match but tokens overlap)
        — surface as possible new project linked to existing. */
     const overlap=_findOverlapHint(e);
