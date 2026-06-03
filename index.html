@@ -732,7 +732,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-06-01 · soft live · 8v-3ar scan matcher hardening + park-for-review</div>
+  <div class="build-stamp" id="build-stamp">build 2026-06-03 · soft live · 8v-3aw scan-row block sender/domain</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -2394,11 +2394,17 @@ function _renderRealScanRow(c){
     actionsHtml='<button class="btn btn-sm btn-primary" onclick="_realScanCreateNew('+idJson+')">Create new project</button>'
       +' <button class="btn btn-sm" onclick="_realScanLinkPrompt('+idJson+')">Link to existing</button>';
   }
+  /* Phase 8v-3aw: kebab next to sender opens an inline picker letting the
+     user block the exact address or whole @domain from future scans. The
+     picker only renders for the row whose id matches blockMenuOpenId. */
+  const kebabBtn=' <button onclick="_realScanToggleBlockMenu('+idJson+')" title="Block this sender or domain from future scans" style="background:none;border:1px solid #e0e0dc;color:#888;font-size:10px;line-height:1;padding:1px 6px;border-radius:3px;cursor:pointer;margin-left:6px;vertical-align:middle;">⋯ Block</button>';
+  const blockMenuHtml=(realScanState&&realScanState.blockMenuOpenId===e.id)?_renderRealScanBlockMenu(e):'';
   return '<div style="padding:10px 12px;border:1px solid '+rowBorder+';border-radius:6px;margin-bottom:6px;background:'+rowBg+';display:flex;gap:10px;align-items:flex-start;">'
     +checkboxHtml
     +'<div style="flex:1;min-width:0;">'
     +'<div style="font-size:13px;font-weight:500;color:#222;margin-bottom:3px;">'+subj+'</div>'
-    +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+openLink+'</div>'
+    +'<div style="font-size:11px;color:#666;margin-bottom:2px;">'+from+(date?' · '+date:'')+openLink+kebabBtn+'</div>'
+    +blockMenuHtml
     +'<div style="font-size:11px;color:#a87000;margin-bottom:8px;">'+reason+'</div>'
     +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+actionsHtml+' <button class="btn btn-sm" onclick="_realScanSkip('+idJson+')" style="color:#a62929;">Skip</button> '+parkBtn+'</div>'
     +'</div>'
@@ -3108,6 +3114,113 @@ function _realScanUnpark(emailId){
   if(!realScanState)return;
   realScanState.decisions.delete(emailId);
   renderRealScanReview();
+}
+/* ====== Phase 8v-3aw: block sender / domain from scan rows ======
+   The scan-row kebab opens a small inline picker (rendered by
+   _renderRealScanBlockMenu) with two options: block the exact sender
+   address, or block its whole @domain. Both push the value into
+   scanSettings.ignoreSenders / ignoreDomains (the same lists exposed in
+   the Inbox scan settings modal), persist, then sweep any currently-
+   visible rows from the same sender/domain into a 'blocked' decision so
+   they drop out of the review buckets immediately. Future scans skip them
+   via the existing _emailMatchesIgnoreList() pipeline. */
+function _realScanToggleBlockMenu(emailId){
+  if(!realScanState)return;
+  realScanState.blockMenuOpenId=(realScanState.blockMenuOpenId===emailId)?null:emailId;
+  renderRealScanReview();
+}
+function _realScanCloseBlockMenu(){
+  if(!realScanState)return;
+  realScanState.blockMenuOpenId=null;
+  renderRealScanReview();
+}
+function _renderRealScanBlockMenu(e){
+  const addr=(e.fromEmail||'').toLowerCase();
+  if(!addr){
+    return '<div style="margin:4px 0 8px 0;padding:6px 10px;background:#fdf4f4;border:1px solid #f0d0d0;border-radius:5px;font-size:11px;color:#7a2020;">No sender address on this email — nothing to block. <a href="#" onclick="_realScanCloseBlockMenu();return false;" style="color:#7a2020;">close</a></div>';
+  }
+  const at=addr.indexOf('@');
+  const domain=at>=0?addr.substring(at+1):'';
+  const idJson=JSON.stringify(e.id).replace(/"/g,'&quot;');
+  const alreadySender=(scanSettings.ignoreSenders||[]).some(function(p){return p.toLowerCase()===addr;});
+  const alreadyDomain=domain&&(scanSettings.ignoreDomains||[]).some(function(d){return d.toLowerCase()===domain;});
+  const senderBtn=alreadySender
+    ? '<span style="font-size:11px;color:#888;padding:4px 8px;">Already blocked: '+esc(addr)+'</span>'
+    : '<button class="btn btn-sm" style="color:#7a2020;border-color:#e0c4c4;" onclick="_realScanBlockSender('+idJson+')" title="Add this exact address to Scan settings → Ignore senders">Block sender <span style="font-family:ui-monospace,Menlo,Consolas,monospace;color:#5a1010;">'+esc(addr)+'</span></button>';
+  const domainBtn=!domain
+    ? ''
+    : alreadyDomain
+      ? '<span style="font-size:11px;color:#888;padding:4px 8px;">Already blocked: @'+esc(domain)+'</span>'
+      : '<button class="btn btn-sm" style="color:#7a2020;border-color:#e0c4c4;" onclick="_realScanBlockDomain('+idJson+')" title="Add this whole domain to Scan settings → Ignore domains">Block domain <span style="font-family:ui-monospace,Menlo,Consolas,monospace;color:#5a1010;">@'+esc(domain)+'</span></button>';
+  return '<div style="margin:4px 0 8px 0;padding:8px 10px;background:#fdf4f4;border:1px solid #f0d0d0;border-radius:5px;font-size:11px;">'
+    +'<div style="color:#7a2020;font-weight:500;margin-bottom:6px;">Block from future scans</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    +senderBtn
+    +domainBtn
+    +'<button class="btn btn-sm" onclick="_realScanCloseBlockMenu()" style="color:#666;">Cancel</button>'
+    +'</div>'
+    +'<div style="color:#888;margin-top:6px;font-size:10.5px;">Stored in Scan settings → Ignore senders / Ignore domains. Edit or remove from there later. Any currently-visible rows from the same '+(domain?'sender/domain':'sender')+' are swept out of this scan too.</div>'
+    +'</div>';
+}
+function _realScanBlockSender(emailId){
+  if(!realScanState)return;
+  const c=_findClassified(emailId);
+  if(!c||!c.email||!c.email.fromEmail){alert('No sender address to block.');return;}
+  const addr=c.email.fromEmail.toLowerCase();
+  if(!confirm('Block all emails from '+addr+' in future scans?\n\nAdded to Scan settings → Ignore senders. You can remove it from there later.'))return;
+  if(!Array.isArray(scanSettings.ignoreSenders))scanSettings.ignoreSenders=[];
+  if(scanSettings.ignoreSenders.indexOf(addr)<0){scanSettings.ignoreSenders.push(addr);persistScanSettings();}
+  realScanState.blockMenuOpenId=null;
+  _realScanApplyBlockSweep('sender',addr);
+}
+function _realScanBlockDomain(emailId){
+  if(!realScanState)return;
+  const c=_findClassified(emailId);
+  if(!c||!c.email||!c.email.fromEmail){alert('No sender address to block.');return;}
+  const addr=c.email.fromEmail.toLowerCase();
+  const at=addr.indexOf('@');
+  if(at<0){alert('Could not parse domain from '+addr);return;}
+  const domain=addr.substring(at+1);
+  if(!domain){alert('Could not parse domain from '+addr);return;}
+  if(!confirm('Block all emails from @'+domain+' in future scans?\n\nAdded to Scan settings → Ignore domains. You can remove it from there later.'))return;
+  if(!Array.isArray(scanSettings.ignoreDomains))scanSettings.ignoreDomains=[];
+  if(scanSettings.ignoreDomains.indexOf(domain)<0){scanSettings.ignoreDomains.push(domain);persistScanSettings();}
+  realScanState.blockMenuOpenId=null;
+  _realScanApplyBlockSweep('domain',domain);
+}
+function _realScanApplyBlockSweep(kind,value){
+  if(!realScanState||!Array.isArray(realScanState.classified))return;
+  const v=String(value||'').toLowerCase();
+  let n=0;
+  realScanState.classified.forEach(function(c){
+    if(!c||!c.email)return;
+    if(realScanState.decisions.has(c.email.id))return;
+    const from=(c.email.fromEmail||'').toLowerCase();
+    if(!from)return;
+    let hit=false;
+    if(kind==='sender'){hit=(from===v);}
+    else if(kind==='domain'){
+      const at=from.indexOf('@');
+      if(at>=0)hit=(from.substring(at+1)===v);
+    }
+    if(hit){
+      realScanState.decisions.set(c.email.id,{action:'blocked',blockKind:kind,blockValue:value});
+      if(realScanState.selectedEmailIds)realScanState.selectedEmailIds.delete(c.email.id);
+      n++;
+    }
+  });
+  try{persistRealScanState();}catch(e){}
+  renderRealScanReview();
+  setTimeout(function(){
+    const body=document.getElementById('real-scan-body');
+    if(body){
+      const banner=document.createElement('div');
+      banner.style.cssText='position:sticky;top:0;z-index:6;background:#fdf4f4;color:#7a2020;padding:8px 12px;border:1px solid #f0d0d0;border-radius:6px;font-size:12px;margin-bottom:10px;';
+      banner.textContent='Blocked '+(kind==='domain'?'@'+value:value)+' — '+n+' email'+(n===1?'':'s')+' removed from this scan. Future scans will skip them too.';
+      body.insertBefore(banner,body.firstChild);
+      setTimeout(function(){if(banner.parentNode)banner.remove();},5000);
+    }
+  },10);
 }
 /* ====== Phase 8v-2n: bulk-skip selection handlers ====== */
 function _realScanToggleSelect(emailId){
@@ -13059,7 +13172,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-05-22 · soft live · 8w-2 customer card add-contact','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-06-03 · soft live · 8v-3aw scan-row block sender/domain','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
