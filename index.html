@@ -11414,10 +11414,10 @@ function renderCoDetailsSection(co){
        data for backward compat but no UI surface. */
     const critBadge='';
     const remBadge=rem
-      ? `<span class="cco-rem-badge ${rem.done?'done':(rem.date<todayIso?'overdue':'pending')}" onclick="event.stopPropagation();toggleCompanyNoteReminderDone('${esc(n.id)}')" title="Click to mark ${rem.done?'pending':'done'}">
+      ? `<span class="cco-rem-badge ${rem.done?'done':(rem.date<todayIso?'overdue':'pending')}" onclick="event.stopPropagation();completeCompanyReminderWithNote('${esc(n.id)}')" title="${rem.done?'Click to mark not done':'Mark done — add an optional note'}" style="cursor:pointer;">
           <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
           ${rem.done?'Done':(rem.date<todayIso?'Overdue':'Reminder')} · ${esc(fmtDate(rem.date))}${rem.text?' · '+esc(rem.text):''}
-        </span>${critBadge}`
+        </span>${critBadge}${rem.done&&rem.completionNote?`<div style="font-size:11px;color:#2d7a4b;margin-top:4px;">✓ ${esc(rem.completionNote)}</div>`:''}`
       : '';
     const typeBadge='<span style="display:inline-block;font-size:10px;background:'+typeBg[t]+';color:'+typeFg[t]+';padding:1px 7px;border-radius:3px;font-weight:600;margin-right:6px;">'+(typeLabels[t]||'Note')+(n.time?' · '+esc(n.time):'')+'</span>';
     const teamsBtn=n.teamsJoinUrl
@@ -11638,7 +11638,7 @@ function renderCoTimelineSection(co){
         }).join('')}
       </select>
     </div>`;
-  const items=filtered.length?('<div class="timeline">'+filtered.map(t=>renderCompanyTimelineItem(t)).join('')+'</div>'):'<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No entries match this filter.</div>';
+  const items=filtered.length?('<div class="cco-notes-list">'+filtered.map(t=>renderCompanyTimelineItem(t)).join('')+'</div>'):'<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">No entries match this filter.</div>';
   return filterControl+
     `<div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.08em;font-weight:500;margin-bottom:10px;">${heading}</div>`+
     items;
@@ -12043,51 +12043,63 @@ function setCompanyTimelineFilter(v){
 /* Render a single timeline item by type — email, note, or reminder */
 function renderCompanyTimelineItem(t){
   const todayIso=new Date().toISOString().slice(0,10);
-  if(t.type==='note'){
-    const projectLine='<div style="font-size:11px;color:#888;margin-bottom:4px;">Company-level note</div>';
-    const remLine=t.reminder
-      ? `<div style="font-size:11px;color:${t.reminder.done?'#2d7a4b':(t.reminder.date<todayIso?'#c0392b':'#7b5d00')};margin-top:4px;">
-           ${t.reminder.done?'✓ Reminder done':(t.reminder.date<todayIso?'⚠ Overdue reminder':'⏰ Reminder')} · ${esc(fmtDate(t.reminder.date))}${t.reminder.text?' · '+esc(t.reminder.text):''}
-         </div>`
-      : '';
-    return `<div class="tl-item">
-      <div class="tl-icon" style="background:#fef4e6;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#b8700f" stroke-width="1.5"><path d="M3 2h8l2 2v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zM5 6h6M5 9h6M5 12h4"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-size:12px;color:#666;margin-bottom:2px;"><strong style="color:#1a1a18;font-weight:500;">${esc(t.author||'')}</strong> added a note · <span style="color:#aaa;">${esc(fmtDate(t.date))}</span></div>
-        ${projectLine}
-        <div style="font-size:13px;color:#2b2b28;line-height:1.5;white-space:pre-wrap;">${esc(t.text||'')}</div>
-        ${remLine}
-      </div>
-    </div>`;
-  }
+  const typeLabels={'note':'Note','call-in':'Call inbound','call-out':'Call outbound','meeting':'Meeting','email':'Email','reminder':'Reminder','status':'Status','flag':'Flag'};
+  const typeBg={'note':'#f4f0e8','call-in':'#e6f1fb','call-out':'#fbf0e0','meeting':'#f3e9f7','email':'#e6f1fb','reminder':'#fef4e6','status':'#f1efe8','flag':'#fcebeb'};
+  const typeFg={'note':'#7a5a14','call-in':'#185fa5','call-out':'#a35400','meeting':'#7a3ea3','email':'#185fa5','reminder':'#7b5d00','status':'#555','flag':'#b8700f'};
+  const tBadge=(tp,extra)=>`<span style="display:inline-block;font-size:10px;background:${typeBg[tp]||'#f4f0e8'};color:${typeFg[tp]||'#7a5a14'};padding:1px 7px;border-radius:3px;font-weight:600;margin-right:6px;">${typeLabels[tp]||'Note'}${extra||''}</span>`;
+  const projLine=t.projectId
+    ? `<div style="font-size:11px;color:#888;margin-top:6px;">On project: <span style="color:#555;">${esc(t.projectName||'')}</span>${t.projectRef?' · <span style="color:#aaa;">'+esc(t.projectRef)+'</span>':''}</div>`
+    : `<div style="font-size:11px;color:#aaa;margin-top:6px;">Company-level</div>`;
+
+  /* Standalone reminder card — boxed, with tick box + optional note. */
   if(t.type==='reminder'){
     const state=t.done?'done':(t.date<todayIso?'overdue':'pending');
     const colour=state==='done'?'#2d7a4b':(state==='overdue'?'#c0392b':'#7b5d00');
-    const bg=state==='done'?'#e8f3ec':(state==='overdue'?'#fbe8e5':'#fef4e6');
+    const label=state==='done'?'Reminder done':(state==='overdue'?'Overdue reminder':'Reminder due');
     const checkSvg=t.done?'<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':'';
-    const doneCtrl=`<div class="rem-check${t.done?' done':''}" style="margin-top:1px;" title="${t.done?'Click to mark not done':'Mark complete (add an optional note)'}" onclick="completeCompanyReminderWithNote('${t.id}')">${checkSvg}</div>`;
-    return `<div class="tl-item">
-      <div class="tl-icon" style="background:${bg};"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${colour}" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg></div>
-      <div style="flex:1;display:flex;gap:9px;align-items:flex-start;">
+    const doneCtrl=`<div class="rem-check${t.done?' done':''}" style="margin-top:1px;" title="${t.done?'Click to mark not done':'Mark complete (add an optional note)'}" onclick="completeCompanyReminderWithNote('${esc(t.id)}')">${checkSvg}</div>`;
+    return `<div class="cco-note-entry">
+      <div class="cco-note-head"><div class="cco-note-meta"><span style="display:inline-block;font-size:10px;background:${typeBg.reminder};color:${colour};padding:1px 7px;border-radius:3px;font-weight:600;margin-right:6px;">${label}</span>· ${esc(fmtDate(t.date))}</div></div>
+      <div style="display:flex;gap:9px;align-items:flex-start;">
         ${doneCtrl}
         <div style="flex:1;">
-          <div style="font-size:12px;color:#666;margin-bottom:2px;"><strong style="color:${colour};font-weight:500;">${state==='done'?'Reminder done':(state==='overdue'?'Overdue reminder':'Reminder due')}</strong> · <span style="color:#aaa;">${esc(fmtDate(t.date))}</span></div>
-          <div style="font-size:13px;color:#2b2b28;line-height:1.5;">${esc(t.text||'(no reminder note)')}</div>
+          <div class="cco-note-text">${esc(t.text||'(no reminder note)')}</div>
           ${t.done&&t.completionNote?`<div style="font-size:12px;color:#2d7a4b;margin-top:4px;">✓ ${esc(t.completionNote)}</div>`:''}
           ${t.noteText?`<div style="font-size:11px;color:#888;margin-top:4px;">From note on ${esc(fmtDate(t.noteDate||''))}: <span style="color:#555;">${esc((t.noteText||'').slice(0,90))}${(t.noteText||'').length>90?'…':''}</span></div>`:''}
+          ${projLine}
         </div>
       </div>
     </div>`;
   }
-  /* Default: email (legacy shape) */
-  return `<div class="tl-item">
-    <div class="tl-icon email"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#185fa5" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 5 6-5"/></svg></div>
-    <div style="flex:1;">
-      <div style="font-size:12px;color:#666;margin-bottom:2px;"><strong style="color:#1a1a18;font-weight:500;">${esc(t.author||'')}</strong> sent an email · <span style="color:#aaa;">${esc(fmtDate(t.date))}</span></div>
-      <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${esc(t.title||'(no subject)')}</div>
-      <div style="font-size:11px;color:#888;margin-bottom:4px;">On project: <span style="color:#555;">${esc(t.projectName||'')}</span> ${t.projectRef?'· <span style="color:#aaa;">'+esc(t.projectRef)+'</span>':''}</div>
-      ${(t.points||[]).length?'<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555;">'+t.points.map(pt=>`<li style="margin-bottom:2px;">${esc(pt)}</li>`).join('')+'</ul>':''}
-    </div>
+
+  /* Email (and any legacy / unknown shape). */
+  if(t.type==='email'||!['note','call-in','call-out','meeting','status','flag'].includes(t.type)){
+    const pts=(t.points||[]).length?'<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555;">'+t.points.map(pt=>`<li style="margin-bottom:2px;">${esc(pt)}</li>`).join('')+'</ul>':'';
+    return `<div class="cco-note-entry">
+      <div class="cco-note-head"><div class="cco-note-meta">${tBadge('email')}<strong>${esc(t.author||'')}</strong> · ${esc(fmtDate(t.date))}</div></div>
+      <div class="cco-note-text" style="font-weight:500;">${esc(t.title||t.subject||'(no subject)')}</div>
+      ${pts}
+      ${projLine}
+    </div>`;
+  }
+
+  /* Note / call / meeting — text entry, optional reminder badge (with note capture). */
+  const tp=t.type||'note';
+  const remBadge=t.reminder
+    ? `<div style="margin-top:8px;"><span class="cco-rem-badge ${t.reminder.done?'done':(t.reminder.date<todayIso?'overdue':'pending')}" onclick="event.stopPropagation();completeCompanyReminderWithNote('${esc(t.id)}')" title="${t.reminder.done?'Click to mark not done':'Mark done — add an optional note'}" style="cursor:pointer;margin-top:0;">
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+        ${t.reminder.done?'Done':(t.reminder.date<todayIso?'Overdue':'Reminder')} · ${esc(fmtDate(t.reminder.date))}${t.reminder.text?' · '+esc(t.reminder.text):''}
+      </span>${t.reminder.done&&t.reminder.completionNote?`<div style="font-size:11px;color:#2d7a4b;margin-top:4px;">✓ ${esc(t.reminder.completionNote)}</div>`:''}</div>`
+    : '';
+  const notesBlock=t.notes?`<div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap;">${esc(t.notes)}</div>`:'';
+  const teamsBtn=t.teamsJoinUrl?`<a href="${esc(t.teamsJoinUrl)}" target="_blank" style="display:inline-block;margin-top:6px;font-size:11px;padding:4px 10px;background:#5059c9;color:#fff;text-decoration:none;border-radius:4px;font-weight:500;">Join Teams meeting ↗</a>`:'';
+  return `<div class="cco-note-entry">
+    <div class="cco-note-head"><div class="cco-note-meta">${tBadge(tp,t.time?' · '+esc(t.time):'')}<strong>${esc(t.author||'')}</strong> · ${esc(fmtDate(t.date))}</div></div>
+    <div class="cco-note-text">${esc(t.text||'')}</div>
+    ${notesBlock}
+    ${remBadge}
+    ${teamsBtn}
+    ${projLine}
   </div>`;
 }
 function saveCompanyToOutlook(){
