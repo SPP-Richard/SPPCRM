@@ -732,7 +732,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="ni" data-admin-only="true" onclick="openTagManager()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l4-4h7v7l-4 4z"/><circle cx="9" cy="5" r="0.8" fill="currentColor"/></svg>Tag manager<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
     <div class="ni" data-admin-only="true" onclick="showAdminSys()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#a62929" stroke-width="1.5"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 11.5v.5"/></svg>Sys admin tools<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-left:auto;opacity:0.3;"><rect x="3" y="8" width="10" height="6" rx="1"/><path d="M5 8V6a3 3 0 016 0v2"/></svg></div>
   </div>
-  <div class="build-stamp" id="build-stamp">build 2026-06-05 · soft live · 8v-3aw scan-row block sender/domain</div>
+  <div class="build-stamp" id="build-stamp">build 2026-06-29 · soft live · 8v-3ay company canonical-merge + edit-name · mark-done fix · name-match + courier filter · timeline complete+note · CRM-SPP-Reminder cats</div>
   <div class="sb">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="av" id="sidebar-av">RC</div>
@@ -927,7 +927,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <div style="display:flex;align-items:center;gap:14px;">
           <div class="ca lg cco-detail-avatar" id="co-avatar">—</div>
           <div style="flex:1;min-width:0;">
-            <div class="pname-lg" id="co-name">—</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <div class="pname-lg" id="co-name">—</div>
+              <button id="co-name-edit" onclick="renameCompanyDisplayName()" title="Edit display name — add spaces / fix capitalisation" style="background:none;border:1px solid #d7d7d2;border-radius:5px;cursor:pointer;color:#888;padding:3px 8px;font-size:11px;line-height:1;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg>Edit name</button>
+            </div>
             <div class="paddr-sm" id="co-type-label">—</div>
             <!-- Phase 8v-3s: action row removed entirely.
                  - Find details: handled at contact level (signature scan).
@@ -10662,7 +10665,7 @@ function _custMergePickSelect(targetName){
   if(!source||source===targetName){hideCustomerMergePicker();return;}
   /* Build a breakdown for the confirm. */
   const all=deriveCompanies();
-  const src=all[source.toLowerCase()]||{};
+  const src=all[_canonicalCompanyKey(source)]||{};
   const projCount=(src.projects||[]).length;
   const conCount=(src.contacts||[]).length;
   /* Count emails currently labelled as the source company. */
@@ -10768,7 +10771,7 @@ async function removeCurrentCompany(){
   const name=currentCompany;
   const norm=name.toLowerCase();
   const all=(typeof deriveCompanies==='function')?deriveCompanies():{};
-  const co=all[norm];
+  const co=all[_canonicalCompanyKey(name)];
   if(!co){alert('Customer record not found.');return;}
   const projCount=(co.projects||[]).length;
   const standalone=!!co.standalone;
@@ -10821,129 +10824,139 @@ async function removeCurrentCompany(){
 }
 
 function deriveCompanies(){
-  /* Returns a map of {normalisedName: {name, type, contacts[], projects[], timeline[]}} */
+  /* Returns a map of {canonicalKey: {name, type, contacts[], projects[], timeline[]}}.
+     Phase: companies are grouped by _canonicalCompanyKey (spaces and
+     punctuation stripped) so display variants — "W B S Keillor",
+     "wbskeillor", "WBS-Keillor" — collapse into ONE record instead of
+     spawning duplicates. Display name prefers a spaced variant, and an
+     explicit companyOverrides[...].displayName (set via Edit name) always
+     wins. Override fields + notes + contacts are aggregated across every
+     override key sharing the same canonical key, so nothing is lost when
+     historic data was stored under a differently-spaced key. */
   const byName={};
+  const _upgradeDisplay=(co,key)=>{
+    if(!co||!key)return;
+    const cur=co.name||'';
+    if(key.indexOf(' ')>=0 && cur.indexOf(' ')<0)co.name=key;
+  };
   const getOrCreate=(name,fallbackType)=>{
     const key=(name||'').trim();
     if(!key)return null;
-    const norm=key.toLowerCase();
+    const norm=_canonicalCompanyKey(key);
+    if(!norm)return null;
     if(!byName[norm]){
       byName[norm]={name:key,type:fallbackType||'other',contacts:[],projects:[],timeline:[],typeVotes:{}};
+    }else{
+      _upgradeDisplay(byName[norm],key);
     }
     if(fallbackType)byName[norm].typeVotes[fallbackType]=(byName[norm].typeVotes[fallbackType]||0)+1;
     return byName[norm];
   };
   projects.forEach(p=>{
-    /* Register the headline companies on the project */
     if(p.architect&&p.architect!=='Unknown')getOrCreate(p.architect,'architect');
     if(p.contractor&&p.contractor!=='Unknown')getOrCreate(p.contractor,'mc');
     (p.subs||[]).forEach(s=>{if(s&&s!=='Unknown')getOrCreate(s,'sub');});
-    /* Contacts carry the strongest type signal */
     (p.contacts||[]).forEach(c=>{
       if(!c.company)return;
       const co=getOrCreate(c.company,c.type);
       if(!co)return;
-      /* Dedupe contacts by name+email within a company */
       const exists=co.contacts.find(x=>x.name===c.name&&(x.email||'')===(c.email||''));
       if(!exists){co.contacts.push({...c,projectId:p.id,projectName:p.name,projectRef:p.ref});}
     });
-    /* Projects list — dedupe by id */
     const touchedCompanies=new Set();
-    if(p.architect&&p.architect!=='Unknown')touchedCompanies.add(p.architect.toLowerCase());
-    if(p.contractor&&p.contractor!=='Unknown')touchedCompanies.add(p.contractor.toLowerCase());
-    (p.subs||[]).forEach(s=>{if(s&&s!=='Unknown')touchedCompanies.add(s.toLowerCase());});
-    (p.contacts||[]).forEach(c=>{if(c.company)touchedCompanies.add(c.company.toLowerCase());});
+    if(p.architect&&p.architect!=='Unknown')touchedCompanies.add(_canonicalCompanyKey(p.architect));
+    if(p.contractor&&p.contractor!=='Unknown')touchedCompanies.add(_canonicalCompanyKey(p.contractor));
+    (p.subs||[]).forEach(s=>{if(s&&s!=='Unknown')touchedCompanies.add(_canonicalCompanyKey(s));});
+    (p.contacts||[]).forEach(c=>{if(c.company)touchedCompanies.add(_canonicalCompanyKey(c.company));});
     touchedCompanies.forEach(n=>{
       if(byName[n]&&!byName[n].projects.find(x=>x.id===p.id)){
         byName[n].projects.push({id:p.id,ref:p.ref,name:p.name,addr:p.addr,stage:p.stage,salesRep:p.salesRep});
       }
     });
-    /* Timeline — attach any email that mentions the company to its record */
     (p.timeline||[]).filter(t=>t.type==='email').forEach(t=>{
-      /* Match by t.sub (company shown in email detail) */
       if(t.sub){
-        const co=byName[t.sub.toLowerCase()];
+        const co=byName[_canonicalCompanyKey(t.sub)];
         if(co){
           co.timeline.push({...t,projectId:p.id,projectName:p.name,projectRef:p.ref});
         }
       }
     });
   });
-  /* Phase 8v-3af: inject standalone customers from companyOverrides. These
-     are user-created via + New customer and have no project linkage yet.
-     Once a real project names them, this entry merges with the project-
-     derived one (deduped via normalised name key). */
-  Object.keys(companyOverrides||{}).forEach(function(norm){
-    const ov=companyOverrides[norm];
+  /* Inject standalone customers from companyOverrides (canonical-keyed). */
+  Object.keys(companyOverrides||{}).forEach(function(rawKey){
+    const ov=companyOverrides[rawKey];
     if(!ov||!ov.standalone)return;
-    if(byName[norm])return;     /* already discovered via a project — skip */
-    const displayName=ov.displayName||norm.replace(/\b\w/g,function(c){return c.toUpperCase();});
-    byName[norm]={name:displayName,type:'other',contacts:[],projects:[],timeline:[],typeVotes:{}};
+    const ckey=_canonicalCompanyKey(rawKey);
+    if(!ckey||byName[ckey])return;
+    const displayName=ov.displayName||rawKey.replace(/\b\w/g,function(c){return c.toUpperCase();});
+    byName[ckey]={name:displayName,type:'other',contacts:[],projects:[],timeline:[],typeVotes:{}};
   });
-  /* Settle each company's type — vote wins, tie-break: architect > mc > sub > other */
+  /* Settle type + aggregate overrides across every matching key. */
   const priority={architect:3,mc:2,sub:1,merchant:1,other:0};
-  Object.values(byName).forEach(co=>{
+  const ovKeys=Object.keys(companyOverrides||{});
+  Object.entries(byName).forEach(([ckey,co])=>{
     let best=co.type,bestScore=-1;
     Object.entries(co.typeVotes).forEach(([t,n])=>{
       const score=n*10+(priority[t]||0);
       if(score>bestScore){bestScore=score;best=t;}
     });
     co.type=best;
-    /* Sort timeline newest first */
     co.timeline.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    /* Sort projects by stage priority then name */
     const sp={quoting:0,spec:1,won:2,lost:3};
     co.projects.sort((a,b)=>(sp[a.stage]-sp[b.stage])||a.name.localeCompare(b.name));
-    /* Sort contacts by name */
     co.contacts.sort((a,b)=>a.name.localeCompare(b.name));
-    /* Merge persisted company-level overrides (rep + notes + BT code + 8v-3q
-       address + mainPhone + 8v-3af roles/btType/customerStatus). */
-    const ov=companyOverrides[co.name.toLowerCase()]||{};
+    const matchKeys=ovKeys.filter(k=>_canonicalCompanyKey(k)===ckey);
+    const ov={noteEntries:[]};
+    matchKeys.forEach(k=>{
+      const m=companyOverrides[k]||{};
+      ['rep','btCode','address','mainPhone','btType','customerStatus'].forEach(fld=>{if(!ov[fld]&&m[fld])ov[fld]=m[fld];});
+      if(!ov.displayName&&m.displayName)ov.displayName=m.displayName;
+      if(m.standalone)ov.standalone=true;
+      if(Array.isArray(m.roles)&&m.roles.length&&!(Array.isArray(ov.roles)&&ov.roles.length))ov.roles=m.roles.slice();
+      if(Array.isArray(m.noteEntries)&&m.noteEntries.length)ov.noteEntries=ov.noteEntries.concat(m.noteEntries);
+    });
+    if(ov.noteEntries.length){
+      const seen={};const deduped=[];
+      ov.noteEntries.forEach(n=>{if(n&&n.id){if(!seen[n.id]){seen[n.id]=1;deduped.push(n);}}else if(n){deduped.push(n);}});
+      ov.noteEntries=deduped;
+    }
+    if(ov.displayName)co.name=ov.displayName;
     co.rep=ov.rep||'';
     co.btCode=ov.btCode||'';
     co.address=ov.address||'';
     co.mainPhone=ov.mainPhone||'';
-    /* Phase 8v-3af: roles[] override beats derived type. If overrides
-       set roles, use them; otherwise seed from the single derived type. */
     co.roles=(Array.isArray(ov.roles)&&ov.roles.length)?ov.roles.slice():(co.type?[co.type]:[]);
-    /* Keep the legacy single co.type field in sync with the first role
-       (or fall back to the existing vote-derived value) for any caller
-       still reading it. */
     if(co.roles.length)co.type=co.roles[0];
     co.btType=ov.btType||'';
     co.customerStatus=ov.customerStatus||'';
     co.standalone=!!ov.standalone;
     co.noteEntries=(ov.noteEntries||[]).slice();
-    /* Sort note entries newest first for display */
     co.noteEntries.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    /* Feed notes + reminders into the unified timeline. These are company-level
-       (no projectId) so the timeline filter can isolate them via value 'company'. */
     co.noteEntries.forEach(n=>{
-      /* Phase 8v-3t: preserve the noteEntry's type (note / call-in /
-         call-out / meeting) plus time + notes so the timeline export can
-         differentiate calls and meetings. Legacy entries with no type
-         fall through to 'note'. */
       co.timeline.push({type:n.type||'note',id:n.id,date:n.date,author:n.author,text:n.text,notes:n.notes||'',time:n.time||'',reminder:n.reminder||null});
       if(n.reminder){
         co.timeline.push({type:'reminder',id:n.id,date:n.reminder.date,text:n.reminder.text,done:!!n.reminder.done,completionNote:n.reminder.completionNote||'',author:n.author,noteDate:n.date,noteText:n.text});
       }
     });
-    /* Re-sort timeline newest first now that notes + reminders are in */
     co.timeline.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   });
-  /* Phase 8w-2: mix manually-added company-level contacts into co.contacts. */
-  Object.values(byName).forEach(function(co){
-    const norm=co.name.toLowerCase();
-    const ov=companyOverrides[norm];
-    if(!ov||!Array.isArray(ov.contacts))return;
-    ov.contacts.forEach(function(c,idx){
-      const nm=(c.name||'').toLowerCase();
-      const em=(c.email||'').toLowerCase();
-      const exists=co.contacts.find(function(x){
-        return (x.name||'').toLowerCase()===nm&&(x.email||'').toLowerCase()===em;
+  /* Mix manually-added company-level contacts in, from every matching
+     override key. companyKey/companyContactIndex point at the REAL override
+     key so the contact modal can still read/write the source. */
+  const ovKeys2=Object.keys(companyOverrides||{});
+  Object.entries(byName).forEach(([ckey,co])=>{
+    ovKeys2.filter(k=>_canonicalCompanyKey(k)===ckey).forEach(function(realKey){
+      const ov=companyOverrides[realKey];
+      if(!ov||!Array.isArray(ov.contacts))return;
+      ov.contacts.forEach(function(c,idx){
+        const nm=(c.name||'').toLowerCase();
+        const em=(c.email||'').toLowerCase();
+        const exists=co.contacts.find(function(x){
+          return (x.name||'').toLowerCase()===nm&&(x.email||'').toLowerCase()===em;
+        });
+        if(exists)return;
+        co.contacts.push(Object.assign({},c,{companyKey:realKey,companyContactIndex:idx}));
       });
-      if(exists)return;
-      co.contacts.push(Object.assign({},c,{companyKey:norm,companyContactIndex:idx}));
     });
     co.contacts.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
   });
@@ -11073,12 +11086,28 @@ function _renderCompanyChaseQueue(){
   }).join('');
 }
 function companyToActionOpen(name){openCompanyDetail(name);}
+/* Phase: locate a company note + its owning override by note id, scanning
+   ALL companyOverrides keys. The reminder handlers used to re-derive the key
+   from the (display) company name via toLowerCase(), which silently failed
+   when the note lived under a different key — e.g. the canonical no-space
+   key, or a spacing/punctuation variant of the company name. That left the
+   "Mark done" button doing nothing (the JT Joinery auto-follow-up case).
+   Scanning by id is key-agnostic and always finds it. */
+function _findCompanyNoteById(noteId){
+  if(!noteId)return null;
+  const keys=Object.keys(companyOverrides||{});
+  for(let i=0;i<keys.length;i++){
+    const ov=companyOverrides[keys[i]];
+    if(!ov||!Array.isArray(ov.noteEntries))continue;
+    const note=ov.noteEntries.find(function(x){return x.id===noteId;});
+    if(note)return {ov:ov,key:keys[i],note:note};
+  }
+  return null;
+}
 function companyToActionDone(name,noteId){
-  const key=String(name||'').toLowerCase();
-  const ov=companyOverrides[key];
-  if(!ov||!Array.isArray(ov.noteEntries))return;
-  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
-  if(!n||!n.reminder)return;
+  const found=_findCompanyNoteById(noteId);
+  if(!found||!found.note||!found.note.reminder)return;
+  const n=found.note;
   n.reminder.done=true;
   /* Phase 8v-3an: close the calendar event if there is one. Best-effort. */
   if(n.reminder.calendarEventId){
@@ -11096,11 +11125,9 @@ function companyToActionDone(name,noteId){
    store + calendar-close path as companyToActionDone. Clicking a done
    reminder un-completes it. */
 async function completeCompanyReminderWithNote(noteId){
-  const key=String(currentCompany||'').toLowerCase();
-  const ov=companyOverrides[key];
-  if(!ov||!Array.isArray(ov.noteEntries))return;
-  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
-  if(!n||!n.reminder)return;
+  const found=_findCompanyNoteById(noteId);
+  if(!found||!found.note||!found.note.reminder)return;
+  const n=found.note;
   if(n.reminder.done){
     n.reminder.done=false;n.reminder.completionNote='';n.reminder.completedAt='';
     persistCompanyOverrides();
@@ -11124,11 +11151,10 @@ async function completeCompanyReminderWithNote(noteId){
   try{_renderCompanyChaseQueue();}catch(_){}
 }
 function companyToActionSnooze(name,noteId){
-  const key=String(name||'').toLowerCase();
-  const ov=companyOverrides[key];
-  if(!ov||!Array.isArray(ov.noteEntries))return;
-  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
-  if(!n||!n.reminder)return;
+  const found=_findCompanyNoteById(noteId);
+  if(!found||!found.note||!found.note.reminder)return;
+  const ov=found.ov;
+  const n=found.note;
   /* Build new dates: +3 days at 10:00 local, weekend-shifted (Phase 8v-3am). */
   const d=new Date();d.setDate(d.getDate()+3);
   const newDate=_shiftIsoToNextWeekday(d.toISOString().slice(0,10));
@@ -11261,7 +11287,7 @@ function setCompanyFilter(f,el){
 
 function openCompanyDetail(name){
   const all=deriveCompanies();
-  const co=all[name.toLowerCase()];
+  const co=all[_canonicalCompanyKey(name)];
   if(!co){alert('Company record not found.');return;}
   currentCompany=co.name;
   /* Reset the currentCompanyTab based on the active layout so syncCompanyHeader picks a valid value */
@@ -11307,7 +11333,7 @@ function filterCompanyMiniList(q){renderCompanyMiniList(q);}
 
 function switchCompany(name){
   const all=deriveCompanies();
-  const co=all[name.toLowerCase()];
+  const co=all[_canonicalCompanyKey(name)];
   if(!co)return;
   currentCompany=co.name;
   if(companyLayout==='compact')currentCompanyTab='overview';
@@ -11318,9 +11344,29 @@ function switchCompany(name){
   renderCompanyDetail();
 }
 
+function renameCompanyDisplayName(){
+  if(!currentCompany){alert('No customer open.');return;}
+  const all=deriveCompanies();
+  const co=all[_canonicalCompanyKey(currentCompany)];
+  const current=(co&&co.name)||currentCompany;
+  const next=prompt('Edit the display name for this customer.\n\nThis only changes how the name is shown (spaces, capitalisation). It does NOT split or merge the record — every variant stays grouped together.\n\nExample: "wbskeillor" \u2192 "W B S Keillor"',current);
+  if(next===null)return;
+  const trimmed=next.trim();
+  if(!trimmed){alert('Name cannot be blank.');return;}
+  if(_canonicalCompanyKey(trimmed)!==_canonicalCompanyKey(current)){
+    if(!confirm('"'+trimmed+'" is a different underlying name, not just a reformat of "'+current+'".\n\nThat would point at a separate customer record rather than rename this one. To simply reformat, keep the same letters and change only spaces/capitals.\n\nContinue anyway?')){return;}
+  }
+  const ckey=_canonicalCompanyKey(current);
+  if(!companyOverrides[ckey])companyOverrides[ckey]={rep:'',btCode:'',noteEntries:[]};
+  companyOverrides[ckey].displayName=trimmed;
+  persistCompanyOverrides();
+  currentCompany=trimmed;
+  if(typeof renderCompanyDetail==='function')renderCompanyDetail();
+  try{if(typeof renderCompanies==='function')renderCompanies((document.getElementById('co-search-box')||{}).value||'');}catch(_){}
+}
 function renderCompanyDetail(){
   const all=deriveCompanies();
-  const co=all[(currentCompany||'').toLowerCase()];
+  const co=all[_canonicalCompanyKey(currentCompany||'')];
   if(!co)return;
   document.getElementById('co-breadcrumb').textContent=co.name;
   document.getElementById('co-name').textContent=co.name;
@@ -11601,7 +11647,7 @@ function renderCoTimelineSection(co){
 /* ---------- Layout dispatcher — picks one of four renderers ---------- */
 function renderCompanyTab(){
   const all=deriveCompanies();
-  const co=all[(currentCompany||'').toLowerCase()];
+  const co=all[_canonicalCompanyKey(currentCompany||'')];
   if(!co)return;
   const body=document.getElementById('co-detail-body');
   /* Sync the tab strip + layout picker visual state */
@@ -11982,11 +12028,11 @@ function deleteCompanyNoteEntry(id){
 }
 /* Toggle the reminder on a note entry between done and pending */
 function toggleCompanyNoteReminderDone(id){
-  if(!currentCompany)return;
-  const key=currentCompany.toLowerCase();
-  const ov=ensureCompanyOverride(key);
-  const n=ov.noteEntries.find(n=>n.id===id);
-  if(n&&n.reminder){n.reminder.done=!n.reminder.done;persistCompanyOverrides();renderCompanyTab();}
+  const found=_findCompanyNoteById(id);
+  if(!found||!found.note||!found.note.reminder)return;
+  found.note.reminder.done=!found.note.reminder.done;
+  persistCompanyOverrides();
+  renderCompanyTab();
 }
 function setCompanyTimelineFilter(v){
   /* 'all', 'company', or a projectId (stringified from option value) */
@@ -12046,7 +12092,7 @@ function renderCompanyTimelineItem(t){
 }
 function saveCompanyToOutlook(){
   const all=deriveCompanies();
-  const co=all[(currentCompany||'').toLowerCase()];
+  const co=all[_canonicalCompanyKey(currentCompany||'')];
   if(!co)return;
   alert('Save to Outlook\n\n'+co.contacts.length+' contact'+(co.contacts.length===1?'':'s')+' for "'+co.name+'" would be pushed to your Outlook contacts, tagged with the company and "SPP" category so they can be filtered later.\n\nReal implementation: Microsoft Graph API batch contact create with conflict handling.');
 }
@@ -13448,7 +13494,7 @@ filterProjects('');
    inside filterProjects, so renderScanStrip + renderOutstandingScanBanner
    already fired. The daily prompt is best-effort and skipped in test mode. */
 try{maybeShowDailyScanReminder();}catch(e){}
-try{console.log('%cSPP prototype build 2026-06-05 · soft live · 8v-3aw scan-row block sender/domain','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
+try{console.log('%cSPP prototype build 2026-06-29 · soft live · 8v-3ay company canonical-merge + edit-name · mark-done fix · name-match + courier filter · timeline complete+note · CRM-SPP-Reminder cats','background:#ffb300;color:#1a1a18;padding:2px 8px;border-radius:3px;font-weight:600;');}catch(e){}
 </script>
 </body>
 </html>
