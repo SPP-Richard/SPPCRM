@@ -1949,6 +1949,14 @@ const DEFAULT_SCAN_SETTINGS={
     'cladding','lining','linings','panel','panels','door','doors','window','windows',
     'finish','finishes','install','installation','supply','fitting','fittings',
     'acoustic','acoustics',
+    /* SPP product vocabulary — commodity words that appear in BOTH project
+       names and generic SPP subjects/straplines/signatures. A single-token
+       match on any of these is noise for a panel merchant, exactly as
+       "school" is noise generally. Tune via Scan settings. */
+    'veneered','veneer','veneers','plywood','laminated','laminate','laminates',
+    'decorative','faced','phenolic','phenol','birch','pine','melamine','mdf',
+    'board','boards','sheet','sheets','gloss','primer','primed','batten',
+    'battens','retardant','retardants','treated',
     /* Sales/admin */
     'cover','response','query','enquiry','enquiries','quote','quotes','quotation',
     'order','orders','invoice','update','updates','submission','submissions',
@@ -3727,17 +3735,16 @@ async function _createCompanyReminderEvent(companyName,reminder,dueIso,opts){
     +noteHtml
     +link
     +'</div>';
+  const remCatName=await _ensureReminderCategory('customer');
   const evt={
     subject:'Reminder: '+text.substring(0,180)+' (for '+(companyName||'customer')+')',
     start:{dateTime:_isoToCalendarLocal(startIso),timeZone:'Europe/London'},
     end:{dateTime:_isoToCalendarLocal(endIso),timeZone:'Europe/London'},
     body:{contentType:'HTML',content:bodyHtml},
-    /* Phase 8v-3ao: SPP-Customer-Reminder category applied to every
-       company-reminder calendar event. Outlook auto-creates the category
-       on first sight, so no pre-setup needed. Lets the user folder/filter/
-       colour-rule customer reminders separately from project events
-       (which carry SPP-CRM-XXXX category instead). */
-    categories:['SPP-Customer-Reminder'],
+    /* Phase: unified CRM-SPP-Reminder-Customer category (see _ensureReminderCategory).
+       One searchable stem across all reminders; typed suffix carries its own colour.
+       Falls back to the legacy name only if the helper returns empty. */
+    categories:remCatName?[remCatName]:['SPP-Customer-Reminder'],
     reminderMinutesBeforeStart:15,
     isReminderOn:true
   };
@@ -3751,6 +3758,55 @@ async function _createCompanyReminderEvent(companyName,reminder,dueIso,opts){
     throw new Error('Customer reminder calendar push failed: HTTP '+r.status+(detail?' — '+detail:''));
   }
   return await r.json();
+}
+
+/* ========================================================================
+   Phase: unified reminder calendar categories + silent-token helper
+   ========================================================================
+   Every reminder calendar event carries a typed category under the common
+   stem "CRM-SPP-Reminder-" so ONE Outlook search on that stem finds all
+   reminders, while the typed suffix (Project / Customer / Followup) lets
+   each kind hold its own colour. The master categories are created in
+   Outlook (with a fixed colour preset) on first use IF the optional
+   MailboxSettings.ReadWrite scope is already granted — done SILENTLY so it
+   never triggers a consent popup mid-flow. If the scope isn't granted the
+   category NAME is still stamped on the event (Outlook auto-creates it
+   uncoloured) and the colour can be set once by hand in Outlook. */
+const REMINDER_CATEGORY={
+  project:{name:'CRM-SPP-Reminder-Project',color:'preset7'},
+  customer:{name:'CRM-SPP-Reminder-Customer',color:'preset4'},
+  followup:{name:'CRM-SPP-Reminder-Followup',color:'preset3'}
+};
+const _ensuredReminderCats=new Set();
+async function _getTokenSilentOnly(scopes){
+  if(!_msalInstance||!_msalAccount)return null;
+  try{const r=await _msalInstance.acquireTokenSilent({account:_msalAccount,scopes:scopes});return r.accessToken;}
+  catch(e){return null;}
+}
+async function _ensureReminderCategory(type){
+  const def=REMINDER_CATEGORY[type];
+  if(!def)return '';
+  if(_ensuredReminderCats.has(def.name))return def.name;
+  _ensuredReminderCats.add(def.name); /* only attempt the colour-create once per session */
+  try{
+    const token=await _getTokenSilentOnly(['MailboxSettings.ReadWrite']);
+    if(token){
+      let exists=false;
+      const listR=await fetch('https://graph.microsoft.com/v1.0/me/outlook/masterCategories',{headers:{'Authorization':'Bearer '+token}});
+      if(listR.ok){
+        const j=await listR.json();
+        exists=Array.isArray(j.value)&&j.value.some(function(c){return (c.displayName||'')===def.name;});
+      }
+      if(!exists){
+        await fetch('https://graph.microsoft.com/v1.0/me/outlook/masterCategories',{
+          method:'POST',
+          headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+          body:JSON.stringify({displayName:def.name,color:def.color})
+        });
+      }
+    }
+  }catch(e){try{console.warn('[reminder-cat] colour ensure skipped (non-fatal)',e);}catch(_){}}
+  return def.name;
 }
 
 async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
@@ -3789,12 +3845,16 @@ async function _createOutlookFollowUpEvent(project,email,dueIso,opts){
     +link
     +'</div>';
   const subjectPrefix=isProjectReminder?'Reminder: ':'Follow up: ';
+  const remCatName=await _ensureReminderCategory(isProjectReminder?'project':'followup');
+  const evtCats=[];
+  if(project&&project.outlookCategory)evtCats.push(project.outlookCategory);
+  if(remCatName)evtCats.push(remCatName);
   const evt={
     subject:subjectPrefix+subject.substring(0,180),
     start:{dateTime:_isoToCalendarLocal(startIso),timeZone:'Europe/London'},
     end:{dateTime:_isoToCalendarLocal(endIso),timeZone:'Europe/London'},
     body:{contentType:'HTML',content:bodyHtml},
-    categories:project&&project.outlookCategory?[project.outlookCategory]:[],
+    categories:evtCats,
     reminderMinutesBeforeStart:15,
     isReminderOn:true
   };
@@ -4145,6 +4205,27 @@ function _findNameMatchProjects(email){
   }
   return matched;
 }
+function _distinctiveNameOverlap(email,project){
+  /* Phase: name-match false-positive fix. Returns the distinctive project-name
+     tokens that also appear in the subject, plus whether any is a digit-bearing
+     code token (e.g. EC827, CT24085). Mirrors _findNameMatchProjects so the
+     two stay consistent. Used to decide auto-link vs review: a single plain
+     WORD overlap (e.g. "veneered") is too weak to auto-link, but a code token
+     OR two+ distinct word overlaps is strong enough. */
+  const out={tokens:[],hasCode:false};
+  if(!email||!email.subject||!project)return out;
+  const subjTokens=new Set(_tokenise(email.subject));
+  if(!subjTokens.size)return out;
+  const genericSet=_getGenericNameTokenSet();
+  const pTokens=_tokenise(project.name||'').filter(function(t){return _isDistinctiveNameToken(t,genericSet);});
+  pTokens.forEach(function(t){
+    if(subjTokens.has(t)&&out.tokens.indexOf(t)<0){
+      out.tokens.push(t);
+      if(/\d/.test(t))out.hasCode=true;
+    }
+  });
+  return out;
+}
 function _findOverlapHint(email){
   /* Tokenise the subject + sender's email-domain. Compare against tokens of
      each project's (name + address). Return the project with the highest
@@ -4179,6 +4260,40 @@ function _isInternalOnly(email){
   const all=[email.fromEmail].concat(email.to||[],email.cc||[]).filter(Boolean).map(function(s){return s.toLowerCase();});
   if(!all.length)return false;
   return all.every(function(e){return e.endsWith('@spp.co.uk');});
+}
+/* Phase: courier / logistics noise filter. Two separate problems:
+   (a) Notifications sent directly FROM a carrier domain (pkginfo@ups.com,
+       noreply@dpd.co.uk, ...). These are never project correspondence, so
+       they are treated as ignore outright, same tier as the ignore-list.
+   (b) Delivery / dispatch notifications forwarded or sent from a REAL
+       customer contact's own address (e.g. "Fw: Your parcel from Landmark
+       Joinery is due to be delivered today" from andrew@landmarkjoinery.com).
+       The sender IS a project contact, so the contact matcher would happily
+       auto-link it. We can't ignore the sender, so instead we detect the
+       courier-notification SUBJECT shape and demote the weak contact-only
+       match to review. A genuine project ref/code in the subject still
+       auto-routes via auto-ref higher up, so this only gates the soft path.
+   The subject regex is phrased around notification wording ("your parcel",
+   "out for delivery", "has been delivered") so legit project phrases like
+   "delivery schedule" or "delivery of samples" don't trip it. Even a false
+   trip only demotes to review (one extra click), never a silent drop. */
+const _COURIER_DOMAINS=new Set([
+  'ups.com','dpd.co.uk','dpdgroup.com','dpdlocal.co.uk','dhl.com','dhl.co.uk',
+  'fedex.com','parcelforce.com','royalmail.com','tnt.com','hermes.co.uk',
+  'evri.com','yodel.co.uk','gls-group.com','geopost.com','dxdelivery.com',
+  'tuffnells.co.uk','palletline.com','palletways.com','ukmail.com'
+]);
+const _COURIER_SUBJECT_RE=/(out for delivery|your parcel|your delivery|your package|your shipment|due to be delivered|due for delivery|has been delivered|has been dispatched|has been despatched|has been shipped|was delivered|ship(?:ment|ping) (?:notification|confirmation|update)|tracking number|track your|proof of delivery|delivery (?:confirmation|notification|attempted)|on its way|collection booked)/i;
+function _looksLikeCourierSender(email){
+  if(!email||!email.fromEmail)return false;
+  const addr=String(email.fromEmail).toLowerCase();
+  const at=addr.indexOf('@');
+  if(at<0)return false;
+  return _COURIER_DOMAINS.has(addr.substring(at+1));
+}
+function _looksLikeCourierSubject(email){
+  if(!email||!email.subject)return false;
+  return _COURIER_SUBJECT_RE.test(String(email.subject));
 }
 /* Main entry point: classify a whole batch of emails. The redesigned
    priority order reflects two real-world facts:
@@ -4271,6 +4386,7 @@ function matchEmailsBatch(emails){
     /* Next priority: ignore-list and internal-only override everything. */
     if(_emailMatchesIgnoreList(e))return {email:e,decision:'ignore',projectId:null,reason:'ignore-list match'};
     if(_isInternalOnly(e))return {email:e,decision:'ignore',projectId:null,reason:'internal-only chatter'};
+    if(_looksLikeCourierSender(e))return {email:e,decision:'ignore',projectId:null,reason:'courier/logistics sender — not project mail'};
     /* Auto: explicit category */
     if(_emailMatchesProjectCategory(e)){
       const refs=_findRefMatchProjects(e);
@@ -4290,7 +4406,19 @@ function matchEmailsBatch(emails){
     if(refs.length>1)return {email:e,decision:'review-ambiguous',projectId:null,candidates:refs.map(function(p){return {id:p.id,name:p.name};}),reason:'project ref matches '+refs.length+' projects'};
     /* Auto: distinctive project name in subject — cross-domain strong signal */
     const names=_findNameMatchProjects(e);
-    if(names.length===1)return {email:e,decision:'auto-name',projectId:names[0].id,reason:'project name in subject (→ '+names[0].name+')'};
+    if(names.length===1){
+      /* Phase: name-match false-positive fix. Only auto-link when the
+         overlap is a project CODE (digit-bearing, e.g. EC827) or there are
+         2+ distinct distinctive-word overlaps. A single plain-word overlap
+         (e.g. "veneered" against "EC827 ... oak veneered ply linings") is
+         too weak to trust and is demoted to review with the project
+         pre-selected as a candidate. */
+      const ov=_distinctiveNameOverlap(e,names[0]);
+      if(ov.hasCode||ov.tokens.length>=2){
+        return {email:e,decision:'auto-name',projectId:names[0].id,reason:'project name in subject (→ '+names[0].name+') [matched: '+ov.tokens.join(', ')+']'};
+      }
+      return {email:e,decision:'review-ambiguous',projectId:null,candidates:[{id:names[0].id,name:names[0].name}],reason:'weak single-word name match "'+(ov.tokens[0]||'')+'" → '+names[0].name+' — confirm or skip'};
+    }
     if(names.length>1)return {email:e,decision:'review-ambiguous',projectId:null,candidates:names.map(function(p){return {id:p.id,name:p.name};}),reason:'subject matches '+names.length+' project names'};
     /* Contact match — auto only when (a) the contact is unique to one
        project AND (b) the subject carries at least one distinctive token.
@@ -4299,6 +4427,9 @@ function matchEmailsBatch(emails){
     const contacts=_findContactMatchProjects(e);
     if(contacts.length===1){
       const hit=contacts[0];
+      if(_looksLikeCourierSubject(e)){
+        return {email:e,decision:'review-contact-generic',projectId:null,candidates:[{id:hit.project.id,name:hit.project.name}],reason:'looks like a courier/delivery notice from '+hit.matchedEmail+' (on '+hit.project.name+') — confirm only if it relates to the project'};
+      }
       if(!_subjectHasDistinctiveToken(e)){
         return {email:e,decision:'review-contact-generic',projectId:null,candidates:[{id:hit.project.id,name:hit.project.name}],reason:hit.matchedEmail+' is on '+hit.project.name+' — subject too generic to auto-link'};
       }
@@ -6166,12 +6297,13 @@ function renderTab(){
         const isDone=rem.done||false;
         const remCoBadge=item.company?`<span style="display:inline-block;font-size:10px;background:#eef4fb;color:#0c447c;padding:1px 6px;border-radius:3px;margin-right:6px;font-weight:500;">${esc(item.company)}</span>`:'';
         cardHtml=`<div class="rem-card">
-          <div class="rem-check${isDone?' done':''}" onclick="toggleReminderDone('${item.remId}')">${isDone?'<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':''}</div>
+          <div class="rem-check${isDone?' done':''}" title="${isDone?'Click to mark not done':'Mark complete (add an optional note)'}" onclick="completeProjectReminderWithNote('${item.remId}')">${isDone?'<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':''}</div>
           <div class="rem-content">
             <div class="rem-text${isDone?' rem-done-text':''}">${remCoBadge}${esc(item.remText)}</div>
             <div class="rem-date">${fmtDate(item.date)}${item.date<today()&&!isDone?' <span style="color:#a32d2d;font-weight:600;">· overdue</span>':''}</div>
             ${item.remNotes?`<div class="rem-note">${esc(item.remNotes)}</div>`:''}
             ${isDone?`<div class="tl-done-badge"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#27500a" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>Completed</div>`:''}
+            ${isDone&&rem.completionNote?`<div class='rem-note' style='color:#27500a;'>✓ ${esc(rem.completionNote)}</div>`:''}
           </div>
           <button class="iob" onclick="showReminderModal('${item.remId}')" title="Edit"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg></button>
         </div>`;
@@ -7617,6 +7749,32 @@ function toggleReminderDone(rid){
   if(!currentProject)return;
   const r=currentProject.reminders.find(r=>r.id===rid);
   if(r){r.done=!r.done;persistProjects();renderTab();}
+}
+/* Phase: complete a project reminder straight from the timeline WITH an
+   optional brief note. Mirrors toActionDone (also closes the Outlook event)
+   but captures a note. Clicking an already-done reminder un-completes it. */
+async function completeProjectReminderWithNote(rid){
+  if(!currentProject)return;
+  const r=(currentProject.reminders||[]).find(function(x){return x.id===rid;});
+  if(!r)return;
+  if(r.done){
+    r.done=false;r.completionNote='';r.completedAt='';
+    persistProjects();renderTab();
+    return;
+  }
+  const note=prompt('Mark this reminder complete.\n\nAdd a brief note (optional) — or leave blank and press OK:','');
+  if(note===null)return; /* cancelled */
+  r.done=true;
+  r.completionNote=(note||'').trim();
+  r.completedAt=new Date().toISOString();
+  persistProjects();
+  if(r.calendarEventId){
+    const baseSubj=r.calendarEventSubject||(r.text?'Reminder: '+r.text:'Reminder');
+    _updateOutlookEventCompletion(r.calendarEventId,true,baseSubj)
+      .then(function(u){if(u&&u.subject){r.calendarEventSubject=u.subject;try{persistProjects();}catch(e){}}})
+      .catch(function(err){try{console.warn('[reminder] project timeline complete — calendar close failed',err);}catch(_){}});
+  }
+  renderTab();
 }
 
 /* Reminder modal */
@@ -10767,7 +10925,7 @@ function deriveCompanies(){
          fall through to 'note'. */
       co.timeline.push({type:n.type||'note',id:n.id,date:n.date,author:n.author,text:n.text,notes:n.notes||'',time:n.time||'',reminder:n.reminder||null});
       if(n.reminder){
-        co.timeline.push({type:'reminder',id:n.id,date:n.reminder.date,text:n.reminder.text,done:!!n.reminder.done,author:n.author,noteDate:n.date,noteText:n.text});
+        co.timeline.push({type:'reminder',id:n.id,date:n.reminder.date,text:n.reminder.text,done:!!n.reminder.done,completionNote:n.reminder.completionNote||'',author:n.author,noteDate:n.date,noteText:n.text});
       }
     });
     /* Re-sort timeline newest first now that notes + reminders are in */
@@ -10932,6 +11090,38 @@ function companyToActionDone(name,noteId){
   persistCompanyOverrides();
   _renderCompanyChaseQueue();
   if(typeof renderCompanies==='function')renderCompanies(document.getElementById('co-search-box').value||'');
+}
+/* Phase: complete a customer/company reminder straight from the company
+   timeline, with an optional brief note. Reuses the same companyOverrides
+   store + calendar-close path as companyToActionDone. Clicking a done
+   reminder un-completes it. */
+async function completeCompanyReminderWithNote(noteId){
+  const key=String(currentCompany||'').toLowerCase();
+  const ov=companyOverrides[key];
+  if(!ov||!Array.isArray(ov.noteEntries))return;
+  const n=ov.noteEntries.find(function(x){return x.id===noteId;});
+  if(!n||!n.reminder)return;
+  if(n.reminder.done){
+    n.reminder.done=false;n.reminder.completionNote='';n.reminder.completedAt='';
+    persistCompanyOverrides();
+    if(typeof renderCompanyDetail==='function')renderCompanyDetail();
+    try{_renderCompanyChaseQueue();}catch(_){}
+    return;
+  }
+  const note=prompt('Mark this reminder complete.\n\nAdd a brief note (optional) — or leave blank and press OK:','');
+  if(note===null)return; /* cancelled */
+  n.reminder.done=true;
+  n.reminder.completionNote=(note||'').trim();
+  n.reminder.completedAt=new Date().toISOString();
+  persistCompanyOverrides();
+  if(n.reminder.calendarEventId){
+    const baseSubj=n.reminder.calendarEventSubject||('Reminder: '+(n.reminder.text||''));
+    _updateOutlookEventCompletion(n.reminder.calendarEventId,true,baseSubj)
+      .then(function(u){if(u&&u.subject){n.reminder.calendarEventSubject=u.subject;try{persistCompanyOverrides();}catch(e){}}})
+      .catch(function(err){try{console.warn('[reminder] company timeline complete — calendar close failed',err);}catch(_){}});
+  }
+  if(typeof renderCompanyDetail==='function')renderCompanyDetail();
+  try{_renderCompanyChaseQueue();}catch(_){}
 }
 function companyToActionSnooze(name,noteId){
   const key=String(name||'').toLowerCase();
@@ -11828,12 +12018,18 @@ function renderCompanyTimelineItem(t){
     const state=t.done?'done':(t.date<todayIso?'overdue':'pending');
     const colour=state==='done'?'#2d7a4b':(state==='overdue'?'#c0392b':'#7b5d00');
     const bg=state==='done'?'#e8f3ec':(state==='overdue'?'#fbe8e5':'#fef4e6');
+    const checkSvg=t.done?'<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2.5"><path d="M2 5l2.5 2.5L8 3"/></svg>':'';
+    const doneCtrl=`<div class="rem-check${t.done?' done':''}" style="margin-top:1px;" title="${t.done?'Click to mark not done':'Mark complete (add an optional note)'}" onclick="completeCompanyReminderWithNote('${t.id}')">${checkSvg}</div>`;
     return `<div class="tl-item">
       <div class="tl-icon" style="background:${bg};"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${colour}" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-size:12px;color:#666;margin-bottom:2px;"><strong style="color:${colour};font-weight:500;">${state==='done'?'Reminder done':(state==='overdue'?'Overdue reminder':'Reminder due')}</strong> · <span style="color:#aaa;">${esc(fmtDate(t.date))}</span></div>
-        <div style="font-size:13px;color:#2b2b28;line-height:1.5;">${esc(t.text||'(no reminder note)')}</div>
-        ${t.noteText?`<div style="font-size:11px;color:#888;margin-top:4px;">From note on ${esc(fmtDate(t.noteDate||''))}: <span style="color:#555;">${esc((t.noteText||'').slice(0,90))}${(t.noteText||'').length>90?'…':''}</span></div>`:''}
+      <div style="flex:1;display:flex;gap:9px;align-items:flex-start;">
+        ${doneCtrl}
+        <div style="flex:1;">
+          <div style="font-size:12px;color:#666;margin-bottom:2px;"><strong style="color:${colour};font-weight:500;">${state==='done'?'Reminder done':(state==='overdue'?'Overdue reminder':'Reminder due')}</strong> · <span style="color:#aaa;">${esc(fmtDate(t.date))}</span></div>
+          <div style="font-size:13px;color:#2b2b28;line-height:1.5;">${esc(t.text||'(no reminder note)')}</div>
+          ${t.done&&t.completionNote?`<div style="font-size:12px;color:#2d7a4b;margin-top:4px;">✓ ${esc(t.completionNote)}</div>`:''}
+          ${t.noteText?`<div style="font-size:11px;color:#888;margin-top:4px;">From note on ${esc(fmtDate(t.noteDate||''))}: <span style="color:#555;">${esc((t.noteText||'').slice(0,90))}${(t.noteText||'').length>90?'…':''}</span></div>`:''}
+        </div>
       </div>
     </div>`;
   }
